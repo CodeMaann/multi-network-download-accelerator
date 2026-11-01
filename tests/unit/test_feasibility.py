@@ -183,9 +183,20 @@ def _payloads() -> list[Any]:
     ]
 
 
+def _redactor(payloads: list[Any], **overrides: Any) -> Any:
+    identity: dict[str, Any] = {
+        "home": "C:\\Users\\someone",
+        "hostname": "LAPTOP-QX7Z",
+        "ssids": ["Sharma Home 5G", "CafeNet"],
+        "username": "someone",
+    }
+    identity.update(overrides)
+    return fz.Redactor(payloads, **identity)
+
+
 def test_redaction_removes_public_ips_and_isp_names() -> None:
     payloads = _payloads()
-    r = fz.Redactor(payloads, home="C:\\Users\\someone")
+    r = _redactor(payloads)
     out = r.apply(payloads[0])
     text = repr(out)
     assert "203.0.113.7" not in text
@@ -203,7 +214,7 @@ def test_redaction_removes_public_ips_and_isp_names() -> None:
 
 def test_redaction_keeps_private_and_server_addresses() -> None:
     payloads = _payloads()
-    out = fz.Redactor(payloads, home="C:\\Users\\someone").apply(payloads[0])
+    out = _redactor(payloads).apply(payloads[0])
     assert out["results"]["links"][0]["local_ip"] == "192.168.1.36"
     assert out["results"]["links"][1]["local_ip"] == "10.24.5.9"
     assert "5.223.7.195" in out["report"][0]
@@ -212,8 +223,122 @@ def test_redaction_keeps_private_and_server_addresses() -> None:
 
 def test_redaction_preserves_equal_public_ips() -> None:
     payloads = [{"public_ips": {"wifi0": "203.0.113.7", "eth0": "203.0.113.7"}}]
-    out = fz.Redactor(payloads, home="").apply(payloads[0])
+    out = _redactor(payloads, home="").apply(payloads[0])
     assert out["public_ips"] == {"wifi0": "public-ip-A", "eth0": "public-ip-A"}
+
+
+def test_redaction_removes_hostname_ssid_username_and_mac() -> None:
+    payloads: list[Any] = [
+        {
+            "report": [
+                "host laptop-qx7z joined Sharma Home 5G (bssid a4:2b:b0:12:9F:0e)",
+                "profile CafeNet, user someone, adapter 00-1A-2B-3C-4D-5E",
+                "someoneelse and handsomeone are other words",
+            ]
+        }
+    ]
+    out = _redactor(payloads).apply(payloads[0])
+    text = "\n".join(out["report"])
+    for secret in ("laptop-qx7z", "Sharma Home 5G", "CafeNet", "a4:2b", "00-1A"):
+        assert secret.lower() not in text.lower()
+    assert "<hostname>" in text
+    assert text.count("<wifi-ssid>") == 2
+    assert "user <user>," in text
+    assert "someoneelse and handsomeone" in text  # whole words only
+    assert text.count("xx:xx:xx:xx:xx:xx") == 2
+
+
+def test_build_redacted_fails_closed_on_a_surviving_secret() -> None:
+    # Dict keys are not rewritten, so a secret used as a key survives scrubbing; the final
+    # scan must catch it and refuse to produce any output.
+    payloads = {"leaky.json": {"by_host": {"LAPTOP-QX7Z": 1}}}
+    with pytest.raises(fz.RedactionLeak, match="hostname"):
+        fz.build_redacted(payloads, {}, _redactor(list(payloads.values())))
+
+
+def test_build_redacted_routes_files_and_validates_csv() -> None:
+    payloads = {
+        "throughput-1.json": {"report": ["ok 203.0.113.7"], "public_ips": {"a": "203.0.113.7"}},
+        "mobile-x-am.meta.json": {"public_ips": {"a": "203.0.113.7"}},
+    }
+    csvs = {"mobile-x-am.csv": "t_ms,link,bytes,saturated\n0,a,0,0\n"}
+    out = fz.build_redacted(payloads, csvs, _redactor(list(payloads.values())))
+    assert set(out) == {
+        "docs/feasibility/throughput-1.json",
+        "docs/feasibility/REPORT.md",
+        "scenarios/recorded/mobile-x-am.meta.json",
+        "scenarios/recorded/mobile-x-am.csv",
+    }
+    assert all("203.0.113.7" not in text for text in out.values())
+
+
+# --- public-IP sharing, warm-up check, timer period -------------------------------------------
+
+
+def test_public_ip_sharing_exact_and_same_24() -> None:
+    sharing = fz.public_ip_sharing(
+        {
+            "wifi0": "203.0.113.7",
+            "eth0": "203.0.113.7",
+            "mobile0": "198.51.100.23",
+            "mobile1": "198.51.100.200",
+            "none": None,
+        }
+    )
+    assert sharing["exact"] == [["eth0", "wifi0"]]
+    assert sharing["same_24"] == [{"links": ["mobile0", "mobile1"], "prefix": "198.51.100.0/24"}]
+
+
+def test_verdict_labels_same_24_as_weaker_signal() -> None:
+    v = verdict(public_ips={"wifi0": "198.51.100.23", "mobile0": "198.51.100.99"})
+    assert any(n.startswith("WEAKER SIGNAL") and "/24" in n for n in v["notes"])
+    assert not any("share one public IP" in n for n in v["notes"])
+
+
+def test_warmup_check_flags_a_ramping_first_bin() -> None:
+    # Two 500 ms saturated windows; the first bin of each runs at half the later rate.
+    data = {
+        "slow": {
+            10: 50,
+            11: 100,
+            12: 100,
+            13: 100,
+            14: 100,
+            30: 50,
+            31: 100,
+            32: 100,
+            33: 100,
+            34: 100,
+        },
+        "fine": {
+            10: 98,
+            11: 100,
+            12: 100,
+            13: 100,
+            14: 100,
+            30: 101,
+            31: 100,
+            32: 100,
+            33: 100,
+            34: 100,
+        },
+    }
+    check = fz.warmup_check(data, [(1000, 1500), (3000, 3500)], ["slow", "fine", "absent"])
+    assert check["status"] == "insufficient"
+    assert check["links"]["slow"]["status"] == "insufficient"
+    assert check["links"]["slow"]["first_to_later_ratio"] == pytest.approx(0.5)
+    assert check["links"]["slow"]["ratio_by_position"][0] == pytest.approx(0.5)
+    assert check["links"]["fine"]["status"] == "ok"
+    assert check["links"]["absent"]["status"] == "n/a"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="timeBeginPeriod is Windows-only")
+def test_timer_period_is_released_even_when_the_block_raises() -> None:
+    assert fz._active_timer_period_ms is None
+    with pytest.raises(ValueError), fz.timer_period_1ms():
+        assert fz._active_timer_period_ms == 1
+        raise ValueError("boom")
+    assert fz._active_timer_period_ms is None
 
 
 def test_trace_csv_validation() -> None:

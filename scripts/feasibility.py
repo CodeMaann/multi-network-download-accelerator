@@ -143,7 +143,13 @@ class Report:
 
 
 def envelope(
-    job: str, started: str, params: JSONDict, results: JSONDict, report: Report
+    job: str,
+    started: str,
+    params: JSONDict,
+    results: JSONDict,
+    report: Report,
+    *,
+    timer: JSONDict,
 ) -> JSONDict:
     return {
         "job": job,
@@ -152,10 +158,76 @@ def envelope(
         "recorder_git_sha": git_sha(),
         "python": platform.python_version(),
         "platform": platform.platform(),
+        "timer": timer,
         "params": params,
         "results": results,
         "warnings": report.warnings,
         "report": report.lines,
+    }
+
+
+# --- timer environment ---------------------------------------------------------------------
+# timeBeginPeriod(1) changes every latency-sensitive number (asyncio timers go from 15.6 ms
+# ticks to ~1 ms), so it is an environment condition: every output records whether it was
+# requested, what Windows reports, and what an asyncio 1 ms sleep actually took.
+
+_active_timer_period_ms: int | None = None
+
+
+@contextlib.contextmanager
+def timer_period_1ms(enabled: bool = True) -> Iterator[None]:
+    """timeBeginPeriod(1) for the duration of the block, always paired with timeEndPeriod(1),
+    including when the block raises or is interrupted."""
+    global _active_timer_period_ms
+    if not enabled or sys.platform != "win32":
+        yield
+        return
+    import ctypes
+
+    winmm = ctypes.WinDLL("winmm")
+    if winmm.timeBeginPeriod(1) != 0:  # TIMERR_NOERROR
+        raise OSError("timeBeginPeriod(1) failed")
+    _active_timer_period_ms = 1
+    try:
+        yield
+    finally:
+        _active_timer_period_ms = None
+        winmm.timeEndPeriod(1)
+
+
+def reported_timer_resolution_ms() -> float | None:
+    """The current timer resolution Windows reports (NtQueryTimerResolution), in ms."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+
+    coarsest, finest, current = ctypes.c_ulong(), ctypes.c_ulong(), ctypes.c_ulong()
+    try:
+        status = ctypes.WinDLL("ntdll").NtQueryTimerResolution(
+            ctypes.byref(coarsest), ctypes.byref(finest), ctypes.byref(current)
+        )
+    except (OSError, AttributeError):
+        return None
+    return current.value / 10_000 if status == 0 else None  # 100 ns units
+
+
+async def _probe_sleep_1ms(samples: int) -> list[float]:
+    got = []
+    for _ in range(samples):
+        t = time.perf_counter()
+        await asyncio.sleep(0.001)
+        got.append((time.perf_counter() - t) * 1000)
+    return got
+
+
+def timer_environment(samples: int = 20) -> JSONDict:
+    """Measured timer conditions of this process right now. Call it inside the same
+    timer_period_1ms() block as the measurement it describes."""
+    probe = asyncio.run(_probe_sleep_1ms(samples))
+    return {
+        "timer_period_requested_ms": _active_timer_period_ms,
+        "timer_resolution_ms": reported_timer_resolution_ms(),
+        "asyncio_sleep_1ms_p50_ms": round(statistics.median(probe), 3),
     }
 
 
@@ -551,6 +623,9 @@ class LinkObs:
 
     server_ips: set[str] = field(default_factory=set)
     client_ips: set[str] = field(default_factory=set)
+    # Local TCP ports seen: as many ports as requests means every request opened a new
+    # connection (nothing was kept alive across duty cycles).
+    local_ports: set[int] = field(default_factory=set)
     statuses: set[int] = field(default_factory=set)
     final_urls: set[str] = field(default_factory=set)
     errors: list[str] = field(default_factory=list)
@@ -563,6 +638,7 @@ class LinkObs:
         return {
             "server_ips": sorted(self.server_ips),
             "client_ips": sorted(self.client_ips),
+            "distinct_local_ports": len(self.local_ports),
             "http_statuses": sorted(self.statuses),
             "final_urls": sorted(self.final_urls),
             "requests": self.requests,
@@ -621,6 +697,7 @@ async def _saturate_one(
                         obs.server_ips.add(str(server[0]))
                     if local:
                         obs.client_ips.add(str(local[0]))
+                        obs.local_ports.add(int(local[1]))
                 if resp.status_code not in (200, 206):
                     if len(obs.errors) < 20:
                         obs.errors.append(f"HTTP {resp.status_code}")
@@ -672,6 +749,32 @@ async def lookup_public_ips(
 
 
 # --- job 1: throughput + verdict ----------------------------------------------------------
+
+
+def public_ip_sharing(public_ips: dict[str, str | None]) -> JSONDict:
+    """Which links share a public IPv4 address (strong signal of one upstream), and which have
+    different addresses in the same /24 (weaker signal: CGNAT pools). Pure, so it is tested."""
+    exact: dict[str, list[str]] = {}
+    by_24: dict[str, dict[str, set[str]]] = {}  # prefix -> link -> ip
+    for link_id, ip in public_ips.items():
+        if not ip:
+            continue
+        try:
+            addr = ipaddress.IPv4Address(ip)
+        except ValueError:
+            continue
+        exact.setdefault(ip, []).append(link_id)
+        prefix = str(ipaddress.IPv4Network(f"{addr}/24", strict=False))
+        by_24.setdefault(prefix, {}).setdefault(link_id, set()).add(ip)
+    same_24 = []
+    for prefix, links in by_24.items():
+        distinct_ips = set().union(*links.values())
+        if len(links) > 1 and len(distinct_ips) > 1:
+            same_24.append({"links": sorted(links), "prefix": prefix})
+    return {
+        "exact": [sorted(m) for m in exact.values() if len(m) > 1],
+        "same_24": same_24,
+    }
 
 
 def compute_verdict(
@@ -746,16 +849,19 @@ def compute_verdict(
                 "degrades under load)."
             )
 
-    groups: dict[str, list[str]] = {}
-    for i, ip in public_ips.items():
-        if ip:
-            groups.setdefault(ip, []).append(i)
-    for members in groups.values():
-        if len(members) > 1:
-            notes.append(
-                f"{', '.join(members)} share one public IP, so they share one upstream and can "
-                "add no more than that upstream's capacity together."
-            )
+    sharing = public_ip_sharing(public_ips)
+    verdict["public_ip_sharing"] = sharing
+    for members in sharing["exact"]:
+        notes.append(
+            f"{', '.join(members)} share one public IP, so they share one upstream and can "
+            "add no more than that upstream's capacity together."
+        )
+    for group in sharing["same_24"]:
+        notes.append(
+            f"WEAKER SIGNAL: {', '.join(group['links'])} have different public IPs in the same "
+            f"/24 ({group['prefix']}). Carrier-grade NAT can hand out different addresses from "
+            "one upstream block, so they may share a path even though their IPs differ."
+        )
 
     distinct = set().union(*server_ips.values()) if server_ips else set()
     same_server = len(distinct) == 1 and all(server_ips.get(i) == distinct for i in ids)
@@ -932,6 +1038,80 @@ def is_bin_multiple(seconds: float) -> bool:
     return abs(seconds * 1000 / BIN_MS - round(seconds * 1000 / BIN_MS)) < 1e-9
 
 
+WARMUP_RATIO_LIMIT = 0.85  # first saturated bin below this fraction of the rest = still ramping
+WARMUP_POSITIONS = 5  # how many leading saturated bins to profile
+
+
+def warmup_check(
+    data: dict[str, dict[int, int]],
+    windows_ms: Sequence[tuple[int, int]],
+    link_ids: Sequence[str],
+) -> JSONDict:
+    """Was the warm-up long enough? Per link, compare the first saturated bin of every window
+    with the window's later bins. If the first bin is materially lower, connections were still
+    ramping up when the saturated window began, and the saturated bins understate capacity.
+    Pure, so it is unit-tested."""
+    per_link: dict[str, JSONDict] = {}
+    for link_id in link_ids:
+        bins = data.get(link_id, {})
+        firsts: list[int] = []
+        laters: list[int] = []
+        by_position: list[list[int]] = [[] for _ in range(WARMUP_POSITIONS)]
+        for start, end in windows_ms:
+            values = [bins.get(k, 0) for k in range(start // BIN_MS, end // BIN_MS)]
+            if len(values) < 2:
+                continue
+            firsts.append(values[0])
+            laters.extend(values[1:])
+            for pos, v in enumerate(values[:WARMUP_POSITIONS]):
+                by_position[pos].append(v)
+        later_mean = statistics.fmean(laters) if laters else 0.0
+        if not firsts or later_mean <= 0:
+            per_link[link_id] = {"status": "n/a", "windows": len(firsts)}
+            continue
+        first_mean = statistics.fmean(firsts)
+        ratio = first_mean / later_mean
+        per_link[link_id] = {
+            "status": "insufficient" if ratio < WARMUP_RATIO_LIMIT else "ok",
+            "windows": len(firsts),
+            "first_bin_mean_mbps": round(mbps(first_mean, BIN_MS / 1000), 3),
+            "later_bins_mean_mbps": round(mbps(later_mean, BIN_MS / 1000), 3),
+            "first_to_later_ratio": round(ratio, 3),
+            "ratio_by_position": [
+                round(statistics.fmean(p) / later_mean, 3) for p in by_position if p
+            ],
+        }
+    statuses = [v["status"] for v in per_link.values()]
+    overall = (
+        "insufficient"
+        if "insufficient" in statuses
+        else ("ok" if statuses and all(s == "ok" for s in statuses) else "n/a")
+    )
+    return {"status": overall, "ratio_limit": WARMUP_RATIO_LIMIT, "links": per_link}
+
+
+def report_warmup(check: JSONDict, warmup_s: float, report: Report) -> None:
+    report.say(
+        f"Warm-up check ({warmup_s:g} s warm-up; first saturated bin vs the rest of its window, "
+        f"limit {check['ratio_limit']}):"
+    )
+    for link_id, r in check["links"].items():
+        if r["status"] == "n/a":
+            report.say(f"  {link_id}: n/a (no usable saturated windows)")
+            continue
+        report.say(
+            f"  {link_id}: first bin {r['first_bin_mean_mbps']:.1f} Mbps vs later "
+            f"{r['later_bins_mean_mbps']:.1f} Mbps = {r['first_to_later_ratio']:.2f} "
+            f"over {r['windows']} windows -> {r['status'].upper()}"
+        )
+    if check["status"] == "insufficient":
+        report.warn(
+            "Warm-up was insufficient: the first saturated bins are still ramping up, so the "
+            f"saturated bins understate capacity. Rerun with a longer --warmup-s (e.g. "
+            f"{warmup_s + 1:g})."
+        )
+
+
 @dataclass
 class TraceState:
     links: list[LinkSpec]
@@ -943,6 +1123,9 @@ class TraceState:
     obs: dict[str, LinkObs] = field(default_factory=dict)
     public_ips: dict[str, str | None] = field(default_factory=dict)
     started_at: str = ""
+    timer: JSONDict = field(default_factory=dict)
+    warmup: JSONDict = field(default_factory=dict)
+    connection_reuse: JSONDict = field(default_factory=dict)
 
 
 async def trace_async(args: argparse.Namespace, state: TraceState, report: Report) -> None:
@@ -1077,6 +1260,15 @@ def write_trace(out: Path, args: argparse.Namespace, state: TraceState) -> tuple
         "mobile_bytes": state.budget.used,
         "budget_mb": args.budget_mb,
         "recorder_git_sha": git_sha(),
+        "timer_resolution_ms": state.timer.get("timer_resolution_ms"),
+        "timer": state.timer,
+        "connections_between_cycles": (
+            "closed: each cycle cancels its downloads mid-body, which closes the connections, so "
+            "every warm-up starts with new TCP connections (handshake + slow start from the "
+            "initial window). connection_reuse shows requests vs distinct local ports."
+        ),
+        "connection_reuse": state.connection_reuse,
+        "warmup_check": state.warmup,
         "conditions": args.conditions,
     }
     write_json(meta_path, meta)
@@ -1404,26 +1596,6 @@ def summarise(samples: Sequence[float]) -> JSONDict:
     }
 
 
-@contextlib.contextmanager
-def _timer_period_1ms(enabled: bool) -> Iterator[None]:
-    """Raise the Windows system timer resolution to 1 ms for this process (timeBeginPeriod).
-
-    asyncio's Windows loops wait with millisecond timeouts that the OS rounds up to the system
-    tick (15.6 ms by default). This is the standard mitigation; the job measures whether it works.
-    """
-    if not enabled or sys.platform != "win32":
-        yield
-        return
-    import ctypes
-
-    winmm = ctypes.WinDLL("winmm")
-    winmm.timeBeginPeriod(1)
-    try:
-        yield
-    finally:
-        winmm.timeEndPeriod(1)
-
-
 def timer_job(args: argparse.Namespace, report: Report) -> JSONDict:
     # (label, loop factory, use timeBeginPeriod(1))
     variants: list[tuple[str, Callable[[], asyncio.AbstractEventLoop], bool]] = []
@@ -1443,7 +1615,7 @@ def timer_job(args: argparse.Namespace, report: Report) -> JSONDict:
     raw: dict[str, dict[str, list[float]]] = {}
     summary: dict[str, dict[str, JSONDict]] = {}
     for name, factory, hires in variants:
-        with _timer_period_1ms(hires), asyncio.Runner(loop_factory=factory) as runner:
+        with timer_period_1ms(hires), asyncio.Runner(loop_factory=factory) as runner:
             raw[name] = runner.run(_measure_sleeps(args.delays, args.samples))
         summary[name] = {d: summarise(s) for d, s in raw[name].items()}
         report.say(f"  {name}")
@@ -1494,12 +1666,60 @@ def _collect(obj: Any, visit: Callable[[JSONDict], None]) -> None:
             _collect(v, visit)
 
 
+_MAC = re.compile(r"(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f])")
+_NETSH_NAME = re.compile(r"^\s*(?:SSID|Profile|All User Profile)\s*:\s*(.+?)\s*$")
+
+
+def local_wifi_names() -> set[str]:
+    """SSIDs of the current Wi-Fi connection and every saved Wi-Fi profile. Nothing here
+    records them on purpose, but they can arrive through interface or system metadata, so the
+    redactor scrubs them anyway."""
+    if sys.platform != "win32":
+        return set()
+    names: set[str] = set()
+    for cmd in (["netsh", "wlan", "show", "interfaces"], ["netsh", "wlan", "show", "profiles"]):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=20, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        for line in out.stdout.splitlines():
+            m = _NETSH_NAME.match(line)
+            if m and m.group(1) and m.group(1).lower() not in ("", "<none>"):
+                names.add(m.group(1))
+    return names
+
+
+def local_identity() -> tuple[str, set[str], str]:
+    """(hostname, Wi-Fi names, username) of this machine, for scrubbing."""
+    host = socket.gethostname() or platform.node()
+    user = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+    return host, local_wifi_names(), user
+
+
 class Redactor:
     """Makes results committable: public IPs become public-ip-A/B/... (so "these two links
     share a public IP" survives), ISP names become generic labels, the home directory becomes
-    ~, and any other public IPv4 address that is not a known server address becomes x.x.x.x."""
+    ~, the hostname, Wi-Fi SSIDs and username become placeholders, MAC addresses are masked,
+    and any other public IPv4 address that is not a known server address becomes x.x.x.x.
 
-    def __init__(self, payloads: Iterable[Any], home: str | None = None) -> None:
+    hostname / ssids / username default to this machine's; tests pass them explicitly."""
+
+    def __init__(
+        self,
+        payloads: Iterable[Any],
+        home: str | None = None,
+        hostname: str | None = None,
+        ssids: Iterable[str] | None = None,
+        username: str | None = None,
+    ) -> None:
+        if hostname is None or ssids is None or username is None:
+            detected_host, detected_ssids, detected_user = local_identity()
+            hostname = detected_host if hostname is None else hostname
+            ssids = detected_ssids if ssids is None else ssids
+            username = detected_user if username is None else username
+        self.hostname = hostname
+        self.ssids = sorted({s for s in ssids if len(s) >= 2}, key=len, reverse=True)
+        self.username = username
         self.public: dict[str, str] = {}
         self.isp: dict[str, str] = {}
         self.servers: set[str] = set()
@@ -1537,7 +1757,42 @@ class Redactor:
         if self.home and len(self.home) > 3:
             for variant in {self.home, self.home.replace("\\", "/")}:
                 text = text.replace(variant, "~")
+        for ssid in self.ssids:
+            text = text.replace(ssid, "<wifi-ssid>")
+        if self.hostname and len(self.hostname) >= 2:
+            text = re.sub(rf"(?i)\b{re.escape(self.hostname)}\b", "<hostname>", text)
+        if self.username and len(self.username) >= 3:
+            text = re.sub(rf"\b{re.escape(self.username)}\b", "<user>", text)
+        text = _MAC.sub("xx:xx:xx:xx:xx:xx", text)
         return _IPV4.sub(self._ip_or_mask, text)
+
+    def leaks(self, text: str) -> list[str]:
+        """Kinds of sensitive value still present in `text` (the kind only, never the value)."""
+        found = []
+        if any(re.search(rf"(?<![\d.]){re.escape(ip)}(?![\d.])", text) for ip in self.public):
+            found.append("public IP")
+        without_labels = re.sub(r"(?:mobile carrier|home ISP) [A-Z]", "", text)
+        if any(len(n) >= 3 and n in without_labels for n in self.isp):
+            found.append("ISP/carrier name")
+        if self.home and len(self.home) > 3 and self.home in text:
+            found.append("home directory")
+        if any(s in text for s in self.ssids):
+            found.append("Wi-Fi SSID")
+        if (
+            self.hostname
+            and len(self.hostname) >= 2
+            and re.search(rf"(?i)\b{re.escape(self.hostname)}\b", text)
+        ):
+            found.append("hostname")
+        if (
+            self.username
+            and len(self.username) >= 3
+            and re.search(rf"\b{re.escape(self.username)}\b", text)
+        ):
+            found.append("username")
+        if _MAC.search(text):
+            found.append("MAC address")
+        return found
 
     def _ip_or_mask(self, match: re.Match[str]) -> str:
         ip = match.group(0)
@@ -1575,39 +1830,51 @@ def validate_trace_csv(text: str) -> None:
             raise ValueError(f"trace CSV line {n} is not t_ms,link,bytes,saturated: {line[:60]!r}")
 
 
+class RedactionLeak(RuntimeError):
+    """A redacted output still contains a sensitive value; nothing was written."""
+
+
+def build_redacted(
+    payloads: dict[str, Any], csvs: dict[str, str], redactor: Redactor
+) -> dict[str, str]:
+    """Redacted file contents keyed by relative output path. Fails closed: every output is
+    scanned for every sensitive value, and if anything survived, RedactionLeak is raised
+    before a single file is written. Pure apart from the redactor, so it is unit-tested."""
+    outputs: dict[str, str] = {}
+    report_lines = ["# Feasibility results (redacted)", ""]
+    for name, payload in payloads.items():
+        clean = redactor.apply(payload)
+        folder = "scenarios/recorded" if name.endswith(".meta.json") else "docs/feasibility"
+        outputs[f"{folder}/{name}"] = json.dumps(clean, indent=2) + "\n"
+        if isinstance(clean, dict) and clean.get("report"):
+            stem = name.removesuffix(".json")
+            report_lines += [f"## {stem}", "", "```", *clean["report"], "```", ""]
+    for name, text in csvs.items():
+        validate_trace_csv(text)
+        outputs[f"scenarios/recorded/{name}"] = text
+    if len(report_lines) > 2:
+        outputs["docs/feasibility/REPORT.md"] = "\n".join(report_lines)
+
+    problems = {path: kinds for path, text in outputs.items() if (kinds := redactor.leaks(text))}
+    if problems:
+        detail = "; ".join(f"{path}: {', '.join(kinds)}" for path, kinds in problems.items())
+        raise RedactionLeak(f"Redaction incomplete, nothing written. Still present: {detail}")
+    return outputs
+
+
 def redact_outputs(src: Path, repo_root: Path) -> list[Path]:
     json_files = sorted(p for p in src.glob("*.json") if p.name != "throughput-latest.json")
     meta_files = sorted((src / "traces").glob("*.meta.json"))
     csv_files = sorted((src / "traces").glob("*.csv"))
-    payloads = {p: json.loads(p.read_text(encoding="utf-8")) for p in json_files + meta_files}
-    redactor = Redactor(payloads.values())
+    payloads = {p.name: json.loads(p.read_text(encoding="utf-8")) for p in json_files + meta_files}
+    csvs = {p.name: p.read_text(encoding="utf-8") for p in csv_files}
+    outputs = build_redacted(payloads, csvs, Redactor(payloads.values()))
 
     written: list[Path] = []
-    docs_dir = repo_root / "docs" / "feasibility"
-    traces_dir = repo_root / "scenarios" / "recorded"
-    report_lines = ["# Feasibility results (redacted)", ""]
-    for path in json_files:
-        clean = redactor.apply(payloads[path])
-        target = docs_dir / path.name
-        write_json(target, clean)
-        written.append(target)
-        if isinstance(clean, dict) and clean.get("report"):
-            report_lines += [f"## {path.stem}", "", "```", *clean["report"], "```", ""]
-    for path in meta_files:
-        target = traces_dir / path.name
-        write_json(target, redactor.apply(payloads[path]))
-        written.append(target)
-    for path in csv_files:
-        text = path.read_text(encoding="utf-8")
-        validate_trace_csv(text)
-        target = traces_dir / path.name
+    for rel, text in outputs.items():
+        target = repo_root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8", newline="")
-        written.append(target)
-    if len(report_lines) > 2:
-        target = docs_dir / "REPORT.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("\n".join(report_lines), encoding="utf-8")
         written.append(target)
     return written
 
@@ -1618,7 +1885,10 @@ def maybe_redact(args: argparse.Namespace) -> None:
 
 
 def do_redact(src: Path, dest_root: Path) -> None:
-    written = redact_outputs(src, dest_root)
+    try:
+        written = redact_outputs(src, dest_root)
+    except RedactionLeak as exc:
+        raise SystemExit(f"ERROR: {exc}") from None
     print("\nCommittable copies written (read them before `git add`):", flush=True)
     for path in written:
         shown = path.relative_to(dest_root) if path.is_relative_to(dest_root) else path
@@ -1664,9 +1934,10 @@ def cmd_interfaces(args: argparse.Namespace) -> int:
     report.say()
     preflight(links, infos, facts, report)
     out = Path(args.out)
+    results = {"interfaces": [i.to_json() for i in infos]}
     write_json(
         out / "interfaces.json",
-        envelope("interfaces", now_iso(), {}, {"interfaces": [i.to_json() for i in infos]}, report),
+        envelope("interfaces", now_iso(), {}, results, report, timer=timer_environment()),
     )
     maybe_redact(args)
     return 0
@@ -1679,7 +1950,8 @@ def cmd_throughput(args: argparse.Namespace) -> int:
     require_budget(args, links)
     preflight(links, infos, facts, report)
     started = now_iso()
-    with _timer_period_1ms(True):  # 1 ms timers instead of 15.6 ms ticks (see the timer job)
+    with timer_period_1ms(True):  # 1 ms timers instead of 15.6 ms ticks (see the timer job)
+        timer = timer_environment()
         results = asyncio.run(throughput_async(args, links, report))
     params = {
         "url": args.url,
@@ -1689,7 +1961,7 @@ def cmd_throughput(args: argparse.Namespace) -> int:
         "budget_mb": args.budget_mb,
         "go_ratio": GO_RATIO,
     }
-    payload = envelope("throughput", started, params, results, report)
+    payload = envelope("throughput", started, params, results, report, timer=timer)
     out = Path(args.out)
     write_json(out / f"throughput-{stamp()}.json", payload)
     write_json(out / "throughput-latest.json", payload)
@@ -1738,7 +2010,8 @@ def cmd_trace(args: argparse.Namespace) -> int:
     )
     exit_code = 0
     try:
-        with _timer_period_1ms(True):  # cycles start on time, not on a 15.6 ms tick
+        with timer_period_1ms(True):  # cycles start on time, not on a 15.6 ms tick
+            state.timer = timer_environment()
             asyncio.run(trace_async(args, state, report))
     except KeyboardInterrupt:
         state.truncated = "interrupted"
@@ -1747,6 +2020,22 @@ def cmd_trace(args: argparse.Namespace) -> int:
     if state.bins is None:
         report.warn("Nothing was recorded.")
         return exit_code or 1
+    state.warmup = warmup_check(state.bins.data, state.windows_ms, [lk.id for lk in links])
+    report_warmup(state.warmup, args.warmup_s, report)
+    connection_reuse = {
+        link.id: {
+            "requests": state.obs[link.id].requests,
+            "distinct_local_ports": len(state.obs[link.id].local_ports),
+        }
+        for link in links
+        if link.id in state.obs
+    }
+    state.connection_reuse = connection_reuse
+    for link_id, c in connection_reuse.items():
+        report.say(
+            f"  {link_id}: {c['requests']} requests on {c['distinct_local_ports']} distinct local "
+            "ports (equal means every request opened a new connection)"
+        )
     csv_path, meta_path = write_trace(out, args, state)
     report.say(f"Wrote {csv_path.name} and {meta_path.name} in {csv_path.parent}")
     params = {
@@ -1763,10 +2052,12 @@ def cmd_trace(args: argparse.Namespace) -> int:
         "mobile_bytes": state.budget.used,
         "links": [link.to_json() for link in links],
         "public_ips": state.public_ips,
+        "warmup_check": state.warmup,
+        "connection_reuse": state.connection_reuse,
     }
     write_json(
         out / f"trace-{args.session}-{stamp()}.json",
-        envelope("trace", state.started_at, params, results, report),
+        envelope("trace", state.started_at, params, results, report, timer=state.timer),
     )
     append_ledger(out, f"trace:{args.session}", state.budget.used, args.budget_mb)
     maybe_redact(args)
@@ -1776,6 +2067,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
 def cmd_loopback(args: argparse.Namespace) -> int:
     report = Report()
     started = now_iso()
+    timer = timer_environment()
     proc = subprocess.Popen(
         [sys.executable, str(Path(__file__).resolve()), "_serve"],
         stdout=subprocess.PIPE,
@@ -1795,7 +2087,8 @@ def cmd_loopback(args: argparse.Namespace) -> int:
             proc.wait(timeout=5)
     params = {"seconds": args.seconds, "warmup": args.warmup, "conns_list": args.conns_list}
     write_json(
-        Path(args.out) / "loopback.json", envelope("loopback", started, params, results, report)
+        Path(args.out) / "loopback.json",
+        envelope("loopback", started, params, results, report, timer=timer),
     )
     maybe_redact(args)
     return 0
@@ -1804,10 +2097,12 @@ def cmd_loopback(args: argparse.Namespace) -> int:
 def cmd_zerofill(args: argparse.Namespace) -> int:
     report = Report()
     started = now_iso()
+    timer = timer_environment()
     results = zerofill_job(args, report)
     params = {"dir": str(Path(args.dir).resolve()), "size_gb": args.size_gb}
     write_json(
-        Path(args.out) / "zerofill.json", envelope("zerofill", started, params, results, report)
+        Path(args.out) / "zerofill.json",
+        envelope("zerofill", started, params, results, report, timer=timer),
     )
     maybe_redact(args)
     return 0
@@ -1816,9 +2111,13 @@ def cmd_zerofill(args: argparse.Namespace) -> int:
 def cmd_timer(args: argparse.Namespace) -> int:
     report = Report()
     started = now_iso()
+    timer = timer_environment()
     results = timer_job(args, report)
     params = {"delays_ms": args.delays, "samples": args.samples}
-    write_json(Path(args.out) / "timer.json", envelope("timer", started, params, results, report))
+    write_json(
+        Path(args.out) / "timer.json",
+        envelope("timer", started, params, results, report, timer=timer),
+    )
     maybe_redact(args)
     return 0
 

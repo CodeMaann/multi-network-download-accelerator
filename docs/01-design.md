@@ -88,8 +88,24 @@ bootstrap over seeds.
 ### Pre-registration
 
 `docs/03-benchmark-protocol.md` is written and committed **alone** before any benchmark runs, and
-tagged `protocol-v1`. It includes the cross-validation contradiction criterion (section 5) and the
-tolerance for the decomposition audit (section 3). If the protocol changes after the tag, the change
+tagged `protocol-v1`. It includes the cross-validation contradiction criterion (section 5), the
+tolerance for the decomposition audit (section 3), and the required run conditions below.
+
+### Timer resolution is a run condition
+
+On Windows, asyncio timers round up to the 15.6 ms system tick unless the process calls
+`timeBeginPeriod(1)` (section 7). That shifts every latency-sensitive number, and a run that
+forgot it would look different for no visible reason. So:
+
+- Every real-time component (loopback server and shaper, real downloads, benchmark runners)
+  calls `timeBeginPeriod(1)` and always pairs it with `timeEndPeriod(1)` on exit, including on
+  exceptions and interrupts.
+- Every output records the timer conditions it ran under: `timer_resolution_ms` (what Windows
+  reports), whether 1 ms was requested, and a measured asyncio 1 ms sleep. That goes in every
+  `meta.json` and in **every benchmark result row**.
+- The protocol lists `timeBeginPeriod(1)` as a required run condition, and a result row without
+  the timer fields is invalid.
+- The virtual-time tier is unaffected: it never waits in real time. If the protocol changes after the tag, the change
 is committed and tagged `protocol-v2`, and the README says what changed and why. Tags are never
 moved or rewritten.
 
@@ -220,10 +236,15 @@ virtual timers fire early; the virtual loop overrides it to 1 ns.
   on Windows). One writer thread owning one handle removes the race.
 - The writer emits `writer_blocked` events. The estimator excludes writer-blocked intervals, so a
   slow disk cannot masquerade as a slow link in the estimator or in the decomposition.
-- NTFS zero-fill: writing far past the end of a fresh file makes NTFS fill the gap with zeros.
-  Sparse files (`FSCTL_SET_SPARSE` via ctypes) are used only if the measurement says it matters,
-  and the smoke measurement says it does (section 7). The output file is never pre-sized with
-  `truncate`.
+- **Sparse output files.** Writing far past the end of a fresh file makes NTFS fill the gap with
+  zeros, which stalled one 1 MB write for seconds (section 7). So `disk_writer` marks the output
+  file sparse with `FSCTL_SET_SPARSE` (via ctypes) right after creating it, and **never pre-sizes it
+  with `os.ftruncate`/`truncate`**, which on Windows writes the zeros itself.
+- **Consequence: file size and file contents never indicate completion.** A sparse, partly
+  written file reads as zeros in its holes instead of raising an error, and its size can already
+  be the final size. Neither "the file is the right size" nor "this region is non-zero" means a
+  block was downloaded (a real block can also be all zeros). **The block bitmap is the only
+  authority on which blocks are done**, for the download itself, for verification, and for resume.
 
 ### Schedulers (`sched/`)
 
@@ -282,7 +303,8 @@ can be reconstructed offline. Event types (the schema is finalised in step 6):
 ### Deferred features
 
 - **Resume.** State is a bitmap over the 1 MB blocks (completed regions are not contiguous under work
-  stealing). The validator is a strong ETag, falling back to Last-Modified + Content-Length; with
+  stealing). Because the output file is sparse, resume never inspects the file's size or contents
+  to decide what is done; only the persisted bitmap counts. The validator is a strong ETag, falling back to Last-Modified + Content-Length; with
   neither, resume is refused rather than guessed. Resumed requests use `If-Range`; weak ETags (`W/`)
   cannot be used with it. The state file is written atomically (temp file + `os.replace`), retrying
   on `PermissionError` when antivirus or the search indexer holds the file open.
@@ -395,10 +417,18 @@ says so.
    `timeBeginPeriod(1)`.
 
 It takes `--redact`, which writes committable copies to `docs/feasibility/` and
-`scenarios/recorded/`: public IPs replaced by `public-ip-A/B/…` (so "these links share a public IP"
-survives), carrier and ISP names reduced to generic labels ("mobile carrier A", "home ISP A"), the
-home directory replaced by `~`. Private addresses (192.168.x.x, 10.x.x.x) and the target server's
-addresses are kept.
+`scenarios/recorded/`:
+
+- public IPs replaced by `public-ip-A/B/…` (so "these links share a public IP" survives);
+- carrier and ISP names reduced to generic labels ("mobile carrier A", "home ISP A");
+- the home directory replaced by `~`, and the machine's hostname, Windows username (as a whole
+  word), every Wi-Fi SSID (current connection and all saved profiles) and any MAC address replaced
+  by placeholders. Nothing records the hostname or SSIDs on purpose, but they can arrive through
+  interface or system metadata.
+
+Private addresses (192.168.x.x, 10.x.x.x) and the target server's addresses are kept. Redaction
+**fails closed**: every output is built in memory and scanned for every sensitive value, and if
+anything survived (for example inside a dict key, which is not rewritten), nothing is written.
 
 **A no-go kills only the real-world sanity check, not the project.**
 
@@ -419,6 +449,11 @@ reports stacking efficiency (combined ÷ sum of solo speeds) to separate "the li
 mobile link to reach at least half the home link's speed. Job 1 also confirms that each link's
 connections really left from its own local IP; if not, the verdict is INVALID.
 
+Each link's public IP is recorded in full (and redacted on commit). The verdict reports two signals
+of a shared upstream: links with the **same public IP** (strong), and links with different public
+IPs in the **same /24**, labelled as a weaker signal because carrier-grade NAT can hand out
+different addresses from one upstream block.
+
 ### What the feasibility measurements changed
 
 From smoke runs on 2026-11-01. The official numbers come from the full runs in
@@ -429,8 +464,9 @@ From smoke runs on 2026-11-01. The official numbers come from the full runs in
   met within about 1-2 ms at p95. **Any real-time code that needs sub-16 ms timing (the loopback
   shaper above all) must run under `timeBeginPeriod(1)`.**
 - **NTFS zero-fill.** One 1 MB write at the end of a fresh 1 GiB file stalled for 0.6-3.8 s while
-  NTFS filled the gap; with `FSCTL_SET_SPARSE` it took 0.016 s. By the rule above, sparse output
-  files move into scope for `disk_writer`, pending the official 4 GiB run on the download drive.
+  NTFS filled the gap; with `FSCTL_SET_SPARSE` it took 0.016 s. That settles it: sparse output
+  files are in scope for the step 8 `disk_writer` (section 4). The official 4 GiB run on the
+  download drive is recorded in `00-feasibility.md`.
 - **Never pre-size with `truncate`.** On Windows, `os.ftruncate` to extend a file writes the zeros
   itself (~1.4 s per GiB).
 - **Loopback ceiling.** With the event pipeline, one Python process sustained about 2.3-2.9 Gbps
@@ -498,8 +534,8 @@ If time runs out, cut in this order:
 4. endgame, last, and only if everything is on fire. It is cheap, targets tail loss directly, and
    is the best story.
 
-Out unless a measurement says otherwise: sparse-file engineering, the Kalman estimator, the HTTPS
-comparison run.
+Out unless a measurement says otherwise: the Kalman estimator, the HTTPS comparison run.
+(Sparse files were on this list until the feasibility measurement brought them in.)
 
 ## 9. Repository policy
 

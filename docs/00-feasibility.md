@@ -72,6 +72,30 @@ From the repo root, in the project venv. Raw output goes to `feasibility-out/` (
 
 Mobile data used by every run accumulates in `feasibility-out/mobile-ledger.jsonl`.
 
+## How to read the trace
+
+**Connections are closed between duty cycles, not kept alive.** At the end of each cycle the
+recorder cancels its downloads mid-body, which closes those connections (an HTTP/1.1 connection
+with an unread body can't be reused). Every warm-up therefore starts from scratch: TCP handshake
+plus slow start from the initial congestion window, with no cwnd carried over. The trace job
+checks this instead of assuming it: it reports requests against distinct local ports per link
+(`connection_reuse` in the meta file), and equal numbers mean every request used a new
+connection. Even with keep-alive, slow-start restart would apply after 24 s idle, but a fresh
+handshake costs an extra RTT or two, so the warm-up number should be read as "time from cold to
+saturated, including connection setup".
+
+**The warm-up check.** For each link, the trace job compares the first saturated 100 ms bin of
+every window with the rest of that window (`warmup_check` in the output and the meta file). If the
+first bin averages below 0.85 of the later bins, the connections were still ramping when the
+saturated window began, the saturated bins understate capacity, and the job tells you to rerun
+with a longer `--warmup-s`. `ratio_by_position` profiles the first five saturated bins, so a ramp
+that runs past the first bin is visible too.
+
+**Timer conditions.** The throughput and trace jobs run under `timeBeginPeriod(1)` (released on
+exit, including on errors and Ctrl+C). Every output records `timer_resolution_ms` as Windows
+reports it, whether 1 ms was requested, and a measured asyncio 1 ms sleep, so a run made under
+different timer conditions is visible as such.
+
 ## Measurements
 
 | # | Measurement | Result |
