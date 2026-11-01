@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ruff + mypy (strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --extra dev --python 3.12
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync mypy
+
+  unit:
+    # Windows, because that is the target platform and the virtual loop depends on asyncio
+    # internals whose behaviour (e.g. clock resolution) differs there. The version matrix is the
+    # canary for those internals changing.
+    name: unit (Windows, Python ${{ matrix.python }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --extra dev --python ${{ matrix.python }}
+      - run: uv run --no-sync pytest tests/unit -m "not network"
+
+  integration:
+    name: loopback integration (Windows, Python 3.12)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --extra dev --python 3.12
+      - name: pytest tests/integration
+        shell: bash
+        run: |
+          if [ -d tests/integration ]; then
+            uv run --no-sync pytest tests/integration -m "not network"
+          else
+            echo "No integration tests yet (they arrive with the disk writer in step 8)."
+          fi

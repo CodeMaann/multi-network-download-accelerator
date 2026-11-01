@@ -1,0 +1,27 @@
+# Python / tooling
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Test payloads and download output: NEVER commit
+downloads/
+*.iso
+*.bin
+*.part
+*.tmp
+*.mnda-state
+
+# Raw per-connection JSONL event logs: large and regenerable from the committed seed + config.
+# If one log is needed as evidence, commit that single file gzipped with `git add -f`.
+benchmarks/results/raw/
+
+# Secrets
+.env
+*.pem
+*.key
