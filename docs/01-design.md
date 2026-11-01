@@ -220,9 +220,10 @@ virtual timers fire early; the virtual loop overrides it to 1 ns.
   on Windows). One writer thread owning one handle removes the race.
 - The writer emits `writer_blocked` events. The estimator excludes writer-blocked intervals, so a
   slow disk cannot masquerade as a slow link in the estimator or in the decomposition.
-- NTFS zero-fill: writing far past the end of a fresh file makes NTFS fill the gap with zeros. Its
-  cost is measured in the feasibility script; sparse files (`FSCTL_SET_SPARSE` via ctypes) are used
-  only if the measurement says it matters.
+- NTFS zero-fill: writing far past the end of a fresh file makes NTFS fill the gap with zeros.
+  Sparse files (`FSCTL_SET_SPARSE` via ctypes) are used only if the measurement says it matters,
+  and the smoke measurement says it does (section 7). The output file is never pre-sized with
+  `truncate`.
 
 ### Schedulers (`sched/`)
 
@@ -329,28 +330,38 @@ it assumes, and adaptive would win for reasons that say nothing about real netwo
 
 ### Recorded traces
 
-- Two sessions at different times of day (mid-morning and evening peak), about 750 MB of mobile
-  data each.
+- Two sessions at different times of day (mid-morning and evening peak), 10 minutes each.
+- **Duty-cycled** so 10 minutes of coverage fits the mobile budget: every 30 s cycle is 1 s
+  warm-up + 5 s saturated + 24 s idle, all links at once. The warm-up is taken out of the idle
+  time: after 24 s idle the connections are new, so the first second is connection setup and slow
+  start (several RTTs at 100-200 ms), which would understate capacity if it were counted as
+  saturated. Warm-up bins are recorded with their bytes but `saturated = 0`.
 - About 6 connections per link to saturate it, with all links recorded at the same time, so
   correlated drops are real.
 - 100 ms bins. A 1-second average would smooth away the burstiness that matters.
-- At ~50 Mbps, 750 MB lasts about 2 minutes. Short traces are not looped to make them longer;
-  looping would add an artificial repeating pattern.
+- Traces are not looped to make them longer; looping would add an artificial repeating pattern.
+  How the replayer bridges the idle gaps between saturated windows is decided in step 3 and
+  documented there.
 - A recording measures **goodput, replayed as capacity**. That wording appears in the README and in
   the metric definitions, along with "two samples of my own real conditions".
 
-Trace format, fixed: CSV `t_ms,link,bytes`, one row per 100 ms bin per link.
+Trace format, fixed: CSV `t_ms,link,bytes,saturated`, one row per 100 ms bin per link.
 
 - `t_ms`: integer, monotonic, starts at 0, bin width exactly 100.
 - `link`: stable string id (for example `mobile0`), the same ids as the scenario YAML.
 - `bytes`: integer bytes delivered to the application in that bin.
+- `saturated`: 1 only for bins lying entirely inside a saturated window, else 0. An idle bin is
+  0/0 because nothing was being measured, not because the link stalled; a saturated bin with 0
+  bytes is a real stall.
 - Every link has a row for every bin, including zeros. Rows are never sparse: the replayer must not
   have to guess whether a gap is a stall or a missing sample.
 
-Sidecar `<name>.meta.json`: `recorded_at` (ISO 8601, local time zone), `duration_s`,
-`connections_per_link`, links (id, interface name, carrier/ISP label, whether mobile),
-`server_url`, `total_bytes_per_link`, `sample_ms`, recorder git SHA, and a free-text `conditions`
-note.
+Sidecar `<name>.meta.json`: `recorded_at` (ISO 8601, local time zone), `duration_s` (and
+`planned_duration_s`, `truncated`), `connections_per_link`, `duty_cycle` (including the exact
+`saturated_windows_ms`), links (id, interface name, carrier/ISP label, whether mobile, local IP,
+server IPs reached, whether binding was verified), `server_url`, `total_bytes_per_link`,
+`sample_ms`, mobile bytes used and budget, recorder git SHA, a `semantics` statement, and a
+free-text `conditions` note.
 
 ## 6. Real-world sanity check
 
@@ -365,27 +376,65 @@ says so.
   before and after each run.
 - HTTP is the primary protocol, plus one HTTPS run to measure per-connection handshake cost as part
   of overhead loss. The HTTPS run is the first thing cut if it gets fiddly with pinned IPs.
-- Mobile data budget: 4 GB total, 1.5 GB for trace recording and 2.5 GB for real-world runs. The
-  recorder and the runner take `--budget-mb` and stop hard on it; the budget applies to the mobile
-  link only.
+- Mobile data budget: 4 GB total, 1.5 GB for trace recording (about 1.25 GB expected with the duty
+  cycle) and 2.5 GB for real-world runs. The recorder and the runner take `--budget-mb` and stop
+  hard on it; the budget applies to the mobile link only. MB means 10^6 bytes, as carriers count.
 
 ## 7. Feasibility (day 0)
 
 `scripts/feasibility.py` is a disposable script that does five jobs, with results in
 `docs/00-feasibility.md`:
 
-1. Solo and combined throughput per link (bound to its local IP), with the go/no-go verdict:
-   combined ≥ 1.5 × the best single link.
-2. The trace recorder.
-3. The loopback CPU ceiling (can Python + httpx saturate the speeds the simulator will use?).
+1. Solo, then all links together, then solo again, per link (bound to its local IP), with the
+   go/no-go verdict: combined ≥ 1.5 × the best single link (the mean of its two solo runs).
+2. The duty-cycled trace recorder (section 5).
+3. The loopback ceiling of Python + httpx + an event pipeline (256 KB pieces, one JSON event per
+   piece, 1 MB block assembly, a byte-bounded queue), with the server in a separate process.
 4. NTFS zero-fill cost when writing at a high offset in a fresh large file.
-5. `asyncio.sleep` accuracy against the ~15.6 ms Windows timer (this affects the loopback tier's RTT
-   emulation).
+5. `asyncio.sleep` accuracy under the real clock for 1/5/15/20/50 ms, with and without
+   `timeBeginPeriod(1)`.
 
-It takes `--redact`, which writes a committable copy: public IP removed, carrier and ISP reduced to
-generic labels ("mobile carrier A", "home ISP"). Private addresses (192.168.x.x, 10.x.x.x) are kept.
+It takes `--redact`, which writes committable copies to `docs/feasibility/` and
+`scenarios/recorded/`: public IPs replaced by `public-ip-A/B/…` (so "these links share a public IP"
+survives), carrier and ISP names reduced to generic labels ("mobile carrier A", "home ISP A"), the
+home directory replaced by `~`. Private addresses (192.168.x.x, 10.x.x.x) and the target server's
+addresses are kept.
 
 **A no-go kills only the real-world sanity check, not the project.**
+
+### Download target
+
+Jobs 1 and 2 need throughput only, not range support, so they default to a purpose-built public
+speed-test file (`http://sin-speed.hetzner.com/1GB.bin`, the closest of those checked), never a
+volunteer mirror. OVH's Singapore endpoint is the alternate. Range support is needed from step 8
+onwards, against the author's VPS.
+
+A single endpoint may serve every link from the same server, so a server-side limit could pass for
+links that don't stack. Job 1 therefore records the server IP each link actually connected to.
+**If every link reached the same server IP and the verdict is no-go, the verdict is marked
+SUSPECT** and names an alternate `--url` to rerun against. A go is not marked suspect: a shared
+server limit can only make links look like they don't stack, never the opposite. The verdict also
+reports stacking efficiency (combined ÷ sum of solo speeds) to separate "the links interfere" from
+"the other links are just slow": with home Wi-Fi and Ethernet behind one router, 1.5× requires the
+mobile link to reach at least half the home link's speed. Job 1 also confirms that each link's
+connections really left from its own local IP; if not, the verdict is INVALID.
+
+### What the feasibility measurements changed
+
+From smoke runs on 2026-11-01. The official numbers come from the full runs in
+`docs/00-feasibility.md`.
+
+- **Windows timer resolution.** `asyncio.sleep` on Windows rounds up to the 15.6 ms system tick
+  (a 20 ms sleep took ~32 ms, 50 ms took ~64 ms). With `timeBeginPeriod(1)` every tested delay was
+  met within about 1-2 ms at p95. **Any real-time code that needs sub-16 ms timing (the loopback
+  shaper above all) must run under `timeBeginPeriod(1)`.**
+- **NTFS zero-fill.** One 1 MB write at the end of a fresh 1 GiB file stalled for 0.6-3.8 s while
+  NTFS filled the gap; with `FSCTL_SET_SPARSE` it took 0.016 s. By the rule above, sparse output
+  files move into scope for `disk_writer`, pending the official 4 GiB run on the download drive.
+- **Never pre-size with `truncate`.** On Windows, `os.ftruncate` to extend a file writes the zeros
+  itself (~1.4 s per GiB).
+- **Loopback ceiling.** With the event pipeline, one Python process sustained about 2.3-2.9 Gbps
+  over loopback at 100% CPU. Loopback-tier aggregate rates stay below half of the official figure.
 
 ### Windows source-IP binding
 
@@ -456,9 +505,16 @@ comparison run.
 
 ### Commits
 
+Repository: https://github.com/CodeMaann/multi-network-download-accelerator (public from the first
+commit, MIT).
+
 Work goes directly on `main`, one commit per build step, named after the step ("step 1: virtual
 clock and event loop", "step 2: feasibility script", …). The history reads as the build order. Empty
-placeholder modules are never committed; each step adds its real modules.
+placeholder modules are never committed; each step adds its real modules. The author runs every git
+and GitHub action personally. Commit messages carry no attribution trailers.
+
+Nothing is installed outside the project venv: `uv sync --extra dev` and the committed `uv.lock`
+define the toolchain, and the lockfile is part of the result.
 
 ### Data
 

@@ -17,6 +17,10 @@ downloads/
 *.tmp
 *.mnda-state
 
+# Raw feasibility output: contains your public IP and ISP names. Commit only the redacted
+# copies that `scripts/feasibility.py redact` writes to docs/feasibility/ and scenarios/recorded/.
+feasibility-out/
+
 # Raw per-connection JSONL event logs: large and regenerable from the committed seed + config.
 # If one log is needed as evidence, commit that single file gzipped with `git add -f`.
 benchmarks/results/raw/

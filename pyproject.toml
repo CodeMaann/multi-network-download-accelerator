@@ -45,6 +45,9 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC"]
 
 [tool.mypy]
 python_version = "3.11"
+# The target platform. Pinned so the Ubuntu lint job type-checks the Windows-only code paths
+# (winreg, msvcrt, ctypes.windll, ProactorEventLoop) instead of treating them as unreachable.
+platform = "win32"
 mypy_path = "src"
-files = ["src/mnda", "tests"]
+files = ["src/mnda", "tests", "scripts"]
 strict = true

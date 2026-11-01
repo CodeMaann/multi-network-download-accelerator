@@ -21,7 +21,7 @@ and tagged `protocol-v1` before any benchmark runs.
 ## Build plan
 
 1. Virtual clock and event loop ✅
-2. Feasibility script: do my links actually add up?
+2. Feasibility script: do my links actually add up? (script ✅, measurements pending)
 3. Link simulator
 4. Block map and in-memory sink
 5. Schedulers (static, static-oracle, work stealing, adaptive) and endgame
@@ -36,6 +36,8 @@ The settled design is in [docs/01-design.md](docs/01-design.md).
 ## Development
 
 ```
+git clone https://github.com/CodeMaann/multi-network-download-accelerator
+cd multi-network-download-accelerator
 uv sync --extra dev
 uv run pytest -m "not network"
 uv run ruff check . && uv run mypy
