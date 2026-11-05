@@ -6,7 +6,7 @@ docs/00-feasibility.md.
 Jobs, in the order to run them:
   interfaces   list adapters, default routes and Windows binding pitfalls; suggests --link flags
   throughput   job 1: solo / all-links / solo throughput per link, with the go/no-go verdict
-  trace        job 2: duty-cycled per-link throughput trace, replayed by the simulator
+  trace        job 2: per-link throughput trace (continuous by default), replayed by the simulator
   loopback     job 3: ceiling of Python + httpx + an event pipeline over loopback
   zerofill     job 4: NTFS cost of a write near the end of a freshly created large file
   timer        job 5: asyncio.sleep accuracy under the real clock
@@ -64,8 +64,12 @@ USER_AGENT = (
 BIN_MS = 100
 GO_RATIO = 1.5
 DRIFT_LIMIT = 0.25  # solo before/after differing by more than this is reported as drift
+SOLO_RATIO_LIMIT = 1.5  # solo before/after differing by more than this factor: INVALID
 CONTENTION_LIMIT = 0.7  # a link below this fraction of its solo speed while combined
 STACKING_OK = 0.8  # combined / sum(solo) at or above this means the links do stack
+EFFICIENCY_MAX = 1.0  # combined above the sum of solo speeds: conditions changed, INVALID
+DEAD_LINK_MBPS = 1.0  # a link slower than this on its own is effectively dead
+DROPOUT_MBPS = 0.05  # a phase below this (prints as 0.0) is a dropout
 
 MiB = 1024 * 1024
 MB = 1_000_000
@@ -498,7 +502,7 @@ def parse_links(args: argparse.Namespace, infos: Sequence[IfaceInfo]) -> list[Li
 def require_budget(args: argparse.Namespace, links: Sequence[LinkSpec]) -> None:
     if any(link.mobile for link in links) and args.budget_mb is None:
         raise SystemExit("A link is marked --mobile, so --budget-mb is required.")
-    if not any(link.mobile for link in links):
+    if args.budget_mb is not None and not any(link.mobile for link in links):
         print("Note: no link is marked --mobile, so --budget-mb limits nothing.", flush=True)
 
 
@@ -630,6 +634,12 @@ class LinkObs:
     final_urls: set[str] = field(default_factory=set)
     errors: list[str] = field(default_factory=list)
     requests: int = 0
+    # Requests the server turned away (429/503): public speed-test mirrors cap concurrent
+    # connections per client IP, so asking for more connections than the cap measures nothing.
+    rejected: int = 0
+    # Connection-seconds with a response body streaming. Divided by wall time, this is the
+    # number of connections that were really downloading, whatever --conns asked for.
+    body_seconds: float = 0.0
 
     def binding_ok(self, local_ip: str) -> bool:
         return self.client_ips == {local_ip}
@@ -642,6 +652,8 @@ class LinkObs:
             "http_statuses": sorted(self.statuses),
             "final_urls": sorted(self.final_urls),
             "requests": self.requests,
+            "rejected_by_server": self.rejected,
+            "body_seconds": round(self.body_seconds, 3),
             "errors": self.errors,
         }
 
@@ -673,6 +685,85 @@ async def public_ip(client: httpx.AsyncClient) -> str | None:
     return ip
 
 
+def _exception_chain(exc: BaseException) -> Iterator[BaseException]:
+    seen: set[int] = set()
+    stack = [exc]
+    while stack:
+        e = stack.pop()
+        if id(e) in seen:
+            continue
+        seen.add(id(e))
+        yield e
+        stack.extend(x for x in (e.__cause__, e.__context__) if x is not None)
+        if isinstance(e, BaseExceptionGroup):
+            stack.extend(e.exceptions)
+
+
+def error_class(exc: BaseException) -> str:
+    """'link' if the error says the path through this link failed, so the zero bytes that
+    follow are a real outage: timeouts, resets, unreachable networks, the interface losing its
+    address. 'measurement' if the error says the recorder could not measure the link: a DNS
+    failure (DNS is not bound to the link), the server refusing the connection, or anything
+    unexpected. Pure, so it is unit-tested."""
+    for e in _exception_chain(exc):
+        if isinstance(e, (socket.gaierror, ConnectionRefusedError)):
+            return "measurement"
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+        return "link"
+    if isinstance(exc, OSError):
+        return "link"
+    return "measurement"
+
+
+class Unmeasured:
+    """When the recorder could not measure a link even though it meant to.
+
+    A link is unmeasured while every one of its connections is in a measurement fault (its last
+    outcome was an HTTP error status, a DNS failure, a refused connection or an unexpected
+    error, and nothing has succeeded since), and every link is unmeasured while the recorder
+    itself stalled. Link-class errors (timeouts, resets) do not count: those mean the link was
+    down, which is real data. Times are seconds since t0."""
+
+    def __init__(self, t0: float, conns: int) -> None:
+        self.t0 = t0
+        self.conns = conns
+        self.faulted: dict[str, int] = {}
+        self.since: dict[str, float] = {}
+        self.intervals: dict[str, list[tuple[float, float]]] = {}
+        self.stalls: list[tuple[float, float]] = []
+        self.errors: dict[str, dict[str, int]] = {}
+
+    def count_error(self, link_id: str, kind: str) -> None:
+        per_link = self.errors.setdefault(link_id, {"link": 0, "measurement": 0})
+        per_link[kind] += 1
+
+    def set_fault(self, link_id: str, was: bool, now: bool, t: float) -> None:
+        if was == now:
+            return
+        n = self.faulted.get(link_id, 0)
+        if now:
+            self.faulted[link_id] = n + 1
+            if n + 1 == self.conns:
+                self.since[link_id] = t - self.t0
+        else:
+            if n == self.conns and link_id in self.since:
+                start = self.since.pop(link_id)
+                self.intervals.setdefault(link_id, []).append((start, t - self.t0))
+            self.faulted[link_id] = n - 1
+
+
+REJECTION_BACKOFF_MAX_S = 30.0
+
+
+def rejection_backoff(retry_after: str | None, consecutive: int) -> float:
+    """Seconds to wait after the server turned a request away (429/503): its Retry-After in
+    seconds if it sent one, else 2, 4, 8, ... capped at REJECTION_BACKOFF_MAX_S. Retrying every
+    second is what got this machine locked out of OVH entirely."""
+    if retry_after is not None and retry_after.strip().isdigit():
+        return min(float(retry_after.strip()), REJECTION_BACKOFF_MAX_S)
+    return min(2.0**consecutive, REJECTION_BACKOFF_MAX_S)
+
+
 async def _saturate_one(
     client: httpx.AsyncClient,
     url: str,
@@ -680,36 +771,68 @@ async def _saturate_one(
     bins: Bins,
     budget: MobileBudget,
     obs: LinkObs,
+    unmeasured: Unmeasured | None = None,
 ) -> None:
-    """One connection that downloads as fast as it can, forever, until cancelled."""
+    """One connection that downloads as fast as it can, forever, until cancelled. When the
+    body ends (the file is finished) it simply requests the file again."""
     loop = asyncio.get_running_loop()
-    while True:
-        try:
-            async with client.stream("GET", url) as resp:
-                obs.requests += 1
-                obs.statuses.add(resp.status_code)
-                obs.final_urls.add(str(resp.url))
-                stream = resp.extensions.get("network_stream")
-                if stream is not None:
-                    server = stream.get_extra_info("server_addr")
-                    local = stream.get_extra_info("client_addr")
-                    if server:
-                        obs.server_ips.add(str(server[0]))
-                    if local:
-                        obs.client_ips.add(str(local[0]))
-                        obs.local_ports.add(int(local[1]))
-                if resp.status_code not in (200, 206):
-                    if len(obs.errors) < 20:
-                        obs.errors.append(f"HTTP {resp.status_code}")
-                    await asyncio.sleep(1.0)
-                    continue
-                async for chunk in resp.aiter_raw():
-                    bins.add(link.id, loop.time(), len(chunk))
-                    budget.charge(link.id, len(chunk))
-        except (httpx.HTTPError, OSError) as exc:
-            if len(obs.errors) < 20:
-                obs.errors.append(f"{type(exc).__name__}: {exc}")
-            await asyncio.sleep(0.5)
+    faulted = False
+    rejections = 0  # consecutive 429/503 responses on this connection
+
+    def fault(now: bool) -> None:
+        nonlocal faulted
+        if unmeasured is not None:
+            unmeasured.set_fault(link.id, faulted, now, loop.time())
+        faulted = now
+
+    try:
+        while True:
+            try:
+                async with client.stream("GET", url) as resp:
+                    obs.requests += 1
+                    obs.statuses.add(resp.status_code)
+                    obs.final_urls.add(str(resp.url))
+                    stream = resp.extensions.get("network_stream")
+                    if stream is not None:
+                        server = stream.get_extra_info("server_addr")
+                        local = stream.get_extra_info("client_addr")
+                        if server:
+                            obs.server_ips.add(str(server[0]))
+                        if local:
+                            obs.client_ips.add(str(local[0]))
+                            obs.local_ports.add(int(local[1]))
+                    if resp.status_code not in (200, 206):
+                        if len(obs.errors) < 20:
+                            obs.errors.append(f"HTTP {resp.status_code}")
+                        if unmeasured is not None:
+                            unmeasured.count_error(link.id, "measurement")
+                        fault(True)
+                        delay = 1.0
+                        if resp.status_code in (429, 503):
+                            obs.rejected += 1
+                            rejections += 1
+                            delay = rejection_backoff(resp.headers.get("Retry-After"), rejections)
+                        await asyncio.sleep(delay)
+                        continue
+                    fault(False)
+                    rejections = 0
+                    started = loop.time()
+                    try:
+                        async for chunk in resp.aiter_raw():
+                            bins.add(link.id, loop.time(), len(chunk))
+                            budget.charge(link.id, len(chunk))
+                    finally:
+                        obs.body_seconds += loop.time() - started
+            except (httpx.HTTPError, OSError) as exc:
+                kind = error_class(exc)
+                if len(obs.errors) < 20:
+                    obs.errors.append(f"{kind}: {type(exc).__name__}: {exc}")
+                if unmeasured is not None:
+                    unmeasured.count_error(link.id, kind)
+                fault(kind == "measurement")
+                await asyncio.sleep(0.5)
+    finally:
+        fault(False)
 
 
 async def run_load(
@@ -721,10 +844,13 @@ async def run_load(
     bins: Bins,
     budget: MobileBudget,
     obs: dict[str, LinkObs],
+    unmeasured: Unmeasured | None = None,
 ) -> bool:
     """Saturate `links` with `conns` connections each for `seconds`. True if the budget ran out."""
     tasks = [
-        asyncio.create_task(_saturate_one(clients[link.id], url, link, bins, budget, obs[link.id]))
+        asyncio.create_task(
+            _saturate_one(clients[link.id], url, link, bins, budget, obs[link.id], unmeasured)
+        )
         for link in links
         for _ in range(conns)
     ]
@@ -749,6 +875,11 @@ async def lookup_public_ips(
 
 
 # --- job 1: throughput + verdict ----------------------------------------------------------
+
+
+def overlap_s(intervals: Iterable[tuple[float, float]], lo: float, hi: float) -> float:
+    """Total length of the intervals that falls inside [lo, hi]."""
+    return sum(max(0.0, min(b, hi) - max(a, lo)) for a, b in intervals)
 
 
 def public_ip_sharing(public_ips: dict[str, str | None]) -> JSONDict:
@@ -785,12 +916,27 @@ def compute_verdict(
     binding_ok: dict[str, bool],
     public_ips: dict[str, str | None],
     alternate_url: str = ALTERNATE_URLS[0],
+    refused_s: dict[str, dict[str, float]] | None = None,
 ) -> JSONDict:
-    """The go/no-go verdict. Pure, so it is unit-tested."""
+    """The go/no-go verdict. Pure, so it is unit-tested.
+
+    Order of precedence: binding failure (INVALID: nothing measured means anything), then fewer
+    than two live links (NO-GO: there is nothing to stack, whatever the live link did), then an
+    unstable measurement (INVALID: a dropout phase, solo speeds before and after differing by
+    more than SOLO_RATIO_LIMIT, combined above the sum of solo speeds, or a phase in which the
+    server refused every connection of a link), then GO / NO-GO.
+
+    refused_s[link][phase] is how long the server turned away every connection of that link
+    (HTTP 429/503). That phase measured the server, not the link: it is never read as a dropout,
+    and a link whose solo phases were refused is never declared dead."""
+    refused = refused_s or {}
     ids = list(combined)
     verdict: JSONDict = {"status": "N/A", "go": None, "suspect": False, "reasons": [], "notes": []}
     reasons: list[str] = verdict["reasons"]
     notes: list[str] = verdict["notes"]
+    verdict["public_ips"] = {i: public_ips.get(i) for i in ids}
+    sharing = public_ip_sharing({i: public_ips.get(i) for i in ids})
+    verdict["public_ip_sharing"] = sharing
     if len(ids) < 2:
         reasons.append("Need at least two links to test stacking.")
         return verdict
@@ -806,42 +952,101 @@ def compute_verdict(
         return verdict
 
     solo: dict[str, float] = {}
+    # (link, reason) pairs: why the measurement cannot support a stacking verdict
+    unstable: list[tuple[str, str]] = []
     for i in ids:
-        vals = [v for v in (solo_before.get(i), solo_after.get(i)) if v is not None]
+        before, after = solo_before.get(i), solo_after.get(i)
+        vals = [v for v in (before, after) if v is not None]
         solo[i] = sum(vals) / len(vals) if vals else 0.0
-        if len(vals) == 2 and solo[i] > 0 and abs(vals[0] - vals[1]) / solo[i] > DRIFT_LIMIT:
-            notes.append(
-                f"{i}: solo speed drifted from {vals[0]:.1f} to {vals[1]:.1f} Mbps between the "
-                "before and after measurements, so every ratio here is approximate."
-            )
+        phases = (("solo-before", before), ("combined", combined.get(i)), ("solo-after", after))
+        for phase, v in phases:
+            if refused.get(i, {}).get(phase, 0) > 0:
+                why = (
+                    f"{i}: the server refused every connection for {refused[i][phase]:.1f} s of "
+                    f"{phase} (HTTP 429/503), so that phase measured the server's limit, not the "
+                    "link."
+                )
+                unstable.append((i, why))
+            elif v is not None and v < DROPOUT_MBPS:
+                why = (
+                    f"{i}: {phase} measured {v:.2f} Mbps, a dropout. It is recorded as data, but "
+                    "a phase in which the link delivered nothing cannot support a stacking claim."
+                )
+                unstable.append((i, why))
+        if before is not None and after is not None and min(before, after) >= DROPOUT_MBPS:
+            factor = max(before, after) / min(before, after)
+            if factor > SOLO_RATIO_LIMIT:
+                why = (
+                    f"{i}: solo speed went from {before:.1f} to {after:.1f} Mbps between the "
+                    f"before and after measurements ({factor:.2f}x, limit {SOLO_RATIO_LIMIT}x), "
+                    "so the link changed under the test and no ratio computed from it holds."
+                )
+                unstable.append((i, why))
+            elif abs(before - after) / solo[i] > DRIFT_LIMIT:
+                notes.append(
+                    f"{i}: solo speed drifted from {before:.1f} to {after:.1f} Mbps between the "
+                    "before and after measurements, so every ratio here is approximate."
+                )
         if solo[i] == 0:
             notes.append(
                 f"{i}: delivered nothing on its own. Try `curl.exe --interface <its local IP> "
                 "-o NUL <url>`; if curl fails too, check `route print` for a 0.0.0.0 route on it."
             )
+    verdict["solo_mbps"] = {i: round(v, 2) for i, v in solo.items()}
 
-    best = max(ids, key=lambda i: solo[i])
-    best_mbps = solo[best]
-    if best_mbps <= 0:
-        verdict["status"] = "INVALID"
-        reasons.append("No link delivered any data on its own.")
+    solo_refused = {i for i in ids if {"solo-before", "solo-after"} & set(refused.get(i, {}))}
+    dead = {i: solo[i] for i in ids if solo[i] < DEAD_LINK_MBPS and i not in solo_refused}
+    live = [i for i in ids if i not in dead]
+    verdict["dead_links"] = {i: round(v, 3) for i, v in dead.items()}
+    verdict["live_links"] = live
+    for i, v in dead.items():
+        notes.append(
+            f"{i}: effectively dead ({v:.2f} Mbps on its own, under {DEAD_LINK_MBPS:g} Mbps), so "
+            "it is excluded from the stacking claim."
+        )
+    if len(live) < 2:
+        verdict["status"] = "NO-GO"
+        verdict["go"] = False
+        reasons.append(
+            f"Only {len(live)} link(s) reached {DEAD_LINK_MBPS:g} Mbps on their own "
+            f"({', '.join(live) or 'none'}), so there is nothing to stack."
+        )
+        notes.extend(
+            f"Also unstable, which does not change this no-go: {why}"
+            for i, why in unstable
+            if i in live
+        )
         return verdict
 
-    total = sum(combined.values())
+    problems = [why for i, why in unstable if i in live]
+    best = max(live, key=lambda i: solo[i])
+    best_mbps = solo[best]
+    total = sum(combined[i] for i in live)
+    solo_sum = sum(solo[i] for i in live)
     gain = total / best_mbps
-    efficiency = total / sum(solo.values())
-    go = gain >= GO_RATIO
+    efficiency = total / solo_sum
+    if efficiency > EFFICIENCY_MAX:
+        problems.append(
+            f"Combined ({total:.1f} Mbps) exceeds the sum of the solo speeds ({solo_sum:.1f} "
+            f"Mbps), stacking efficiency {efficiency:.0%}. Links cannot add more together than "
+            "apart, so conditions changed between phases."
+        )
     verdict.update(
-        go=go,
         best_link=best,
         best_single_mbps=round(best_mbps, 2),
         combined_mbps=round(total, 2),
         gain=round(gain, 3),
         stacking_efficiency=round(efficiency, 3),
-        solo_mbps={i: round(v, 2) for i, v in solo.items()},
     )
+    if problems:
+        verdict["status"] = "INVALID"
+        reasons.extend(problems)
+        reasons.append("Rerun the throughput job; this run cannot support either verdict.")
+        return verdict
 
-    for i in ids:
+    go = gain >= GO_RATIO
+    verdict["go"] = go
+    for i in live:
         if solo[i] > 0 and combined[i] / solo[i] < CONTENTION_LIMIT:
             notes.append(
                 f"{i}: fell to {combined[i] / solo[i]:.0%} of its solo speed while the other "
@@ -849,8 +1054,6 @@ def compute_verdict(
                 "degrades under load)."
             )
 
-    sharing = public_ip_sharing(public_ips)
-    verdict["public_ip_sharing"] = sharing
     for members in sharing["exact"]:
         notes.append(
             f"{', '.join(members)} share one public IP, so they share one upstream and can "
@@ -905,6 +1108,30 @@ def compute_verdict(
     return verdict
 
 
+def report_public_ips(verdict: JSONDict, *, enabled: bool, report: Report) -> None:
+    """The public-IP-per-link comparison, printed with the verdict (redacted on commit)."""
+    if not enabled:
+        report.say("  public IPs: not looked up (--no-public-ip)")
+        return
+    ips: dict[str, str | None] = verdict.get("public_ips", {})
+    shown = ", ".join(f"{i}={ip or 'lookup failed'}" for i, ip in ips.items())
+    report.say(f"  public IPs: {shown}")
+    sharing = verdict.get("public_ip_sharing", {"exact": [], "same_24": []})
+    if sharing["exact"]:
+        for members in sharing["exact"]:
+            report.say(f"    SAME public IP: {', '.join(members)} (one upstream)")
+    for group in sharing["same_24"]:
+        report.say(
+            f"    same /24, different IPs: {', '.join(group['links'])} (weaker signal: CGNAT)"
+        )
+    if not sharing["exact"] and not sharing["same_24"]:
+        known = [i for i, ip in ips.items() if ip]
+        if len(known) >= 2:
+            report.say("    no two links share a public IP or a /24")
+        else:
+            report.say("    fewer than two public IPs known, so sharing cannot be checked")
+
+
 async def throughput_async(
     args: argparse.Namespace, links: Sequence[LinkSpec], report: Report
 ) -> JSONDict:
@@ -930,8 +1157,11 @@ async def throughput_async(
                 report.warn("Mobile budget exhausted; remaining phases skipped.")
                 break
             bins = Bins(loop.time())
+            unmeasured = Unmeasured(bins.t0, args.conns)
+            body_before = {link.id: obs[link.id].body_seconds for link in active}
+            rejected_before = {link.id: obs[link.id].rejected for link in active}
             stopped = await run_load(
-                clients, active, args.url, args.conns, args.duration, bins, budget, obs
+                clients, active, args.url, args.conns, args.duration, bins, budget, obs, unmeasured
             )
             elapsed = loop.time() - bins.t0
             window = min(args.duration, elapsed) - args.warmup
@@ -939,8 +1169,26 @@ async def throughput_async(
                 link.id: (mbps(bins.total(link.id, args.warmup), window) if window > 0 else None)
                 for link in active
             }
+            effective = {
+                link.id: round((obs[link.id].body_seconds - body_before[link.id]) / elapsed, 2)
+                for link in active
+            }
+            rejected = {
+                link.id: obs[link.id].rejected - rejected_before[link.id] for link in active
+            }
+            refused = {
+                link.id: round(
+                    overlap_s(unmeasured.intervals.get(link.id, []), args.warmup, elapsed), 2
+                )
+                for link in active
+            }
             shown = "  ".join(
-                f"{i}={r:.1f}" if r is not None else f"{i}=n/a" for i, r in rates.items()
+                (f"{i}={r:.1f}" if r is not None else f"{i}=n/a")
+                + f" ({effective[i]:.1f} of {args.conns} conns"
+                + (f", {rejected[i]} rejected" if rejected[i] else "")
+                + (f", ALL REFUSED {refused[i]:.1f} s" if refused[i] else "")
+                + ")"
+                for i, r in rates.items()
             )
             report.say(f"  {kind:<12} {who:<10} Mbps: {shown}")
             phase_results.append(
@@ -949,6 +1197,9 @@ async def throughput_async(
                     "link": who,
                     "measured_seconds": round(max(window, 0.0), 3),
                     "mbps": rates,
+                    "effective_connections": effective,
+                    "rejected_by_server": rejected,
+                    "all_connections_refused_s": refused,
                     "series_1s_mbps": {
                         link.id: bins.series_mbps(link.id, args.warmup, min(args.duration, elapsed))
                         for link in active
@@ -966,6 +1217,11 @@ async def throughput_async(
     combined = (
         {i: float(v or 0.0) for i, v in combined_phase["mbps"].items()} if combined_phase else {}
     )
+    refused_s: dict[str, dict[str, float]] = {}
+    for p in phase_results:
+        for i, s in p["all_connections_refused_s"].items():
+            if s > 0:
+                refused_s.setdefault(i, {})[p["phase"]] = s
     verdict = compute_verdict(
         solo_before=solo_of("solo-before"),
         solo_after=solo_of("solo-after"),
@@ -973,7 +1229,17 @@ async def throughput_async(
         server_ips={i: o.server_ips for i, o in obs.items()},
         binding_ok={i: o.binding_ok(by_id[i].local_ip) for i, o in obs.items()},
         public_ips=public_ips,
+        refused_s=refused_s,
     )
+    total_rejected = sum(o.rejected for o in obs.values())
+    if total_rejected:
+        peak = max(max(p["effective_connections"].values()) for p in phase_results)
+        report.warn(
+            f"The server turned away {total_rejected} requests (HTTP 429/503): it caps concurrent "
+            f"connections per client IP, and at most ~{peak:.1f} of {args.conns} connections per "
+            f"link were downloading. Rerun with --conns {max(1, math.floor(peak + 0.25))} so "
+            "every connection is real."
+        )
     report.say()
     report.say(f"VERDICT: {verdict['status']}")
     if verdict.get("gain") is not None:
@@ -987,6 +1253,7 @@ async def throughput_async(
             f"  {i}: server IPs {sorted(o.server_ips) or '-'}, "
             f"left from {sorted(o.client_ips) or '-'} (expected {by_id[i].local_ip})"
         )
+    report_public_ips(verdict, enabled=not args.no_public_ip, report=report)
     for line in verdict["reasons"]:
         report.say(f"  REASON: {line}")
     for line in verdict["notes"]:
@@ -1023,15 +1290,80 @@ def saturated_flags(n_bins: int, windows_ms: Sequence[tuple[int, int]]) -> list[
     return flags
 
 
+TraceRow = tuple[int, str, int | None, int]
+
+
 def trace_rows(
-    link_ids: Sequence[str], data: dict[str, dict[int, int]], n_bins: int, flags: Sequence[int]
-) -> list[tuple[int, str, int, int]]:
-    """Dense rows: every link has a row for every bin, zeros included."""
+    link_ids: Sequence[str],
+    data: dict[str, dict[int, int]],
+    n_bins: int,
+    flags: Sequence[int],
+    unmeasured: dict[str, set[int]] | None = None,
+) -> list[TraceRow]:
+    """Dense rows: every link has a row for every bin, zeros included. bytes is None (an empty
+    CSV field) in bins the recorder could not measure: missing, which is not the same as zero."""
+    gaps = unmeasured or {}
     return [
-        (k * BIN_MS, link_id, data.get(link_id, {}).get(k, 0), flags[k])
+        (
+            k * BIN_MS,
+            link_id,
+            None if k in gaps.get(link_id, ()) else data.get(link_id, {}).get(k, 0),
+            flags[k],
+        )
         for k in range(n_bins)
         for link_id in link_ids
     ]
+
+
+def unmeasured_bins(intervals_s: Iterable[tuple[float, float]]) -> set[int]:
+    """Indices of every bin that overlaps any of the intervals (seconds since t0)."""
+    out: set[int] = set()
+    for start, end in intervals_s:
+        lo = max(0, math.floor(round(start * 1000, 6) / BIN_MS))
+        hi = math.ceil(round(end * 1000, 6) / BIN_MS)
+        out.update(range(lo, max(hi, lo + 1)))
+    return out
+
+
+DROPOUT_RUN_BINS = 10  # zero-byte saturated runs this long (1 s) count as outages
+
+
+def dropout_summary(rows: Sequence[TraceRow], link_ids: Sequence[str]) -> JSONDict:
+    """Per link: saturated bins, how many were unmeasured, how many delivered zero bytes, and
+    the runs of zero-byte bins. At low rates a 100 ms bin holds only a few packets, so a single
+    zero bin can be packet timing; a run of at least 1 s is an outage. Pure, so it is tested."""
+    out: JSONDict = {}
+    for link_id in link_ids:
+        saturated = unmeasured = zeros = 0
+        runs: list[int] = []
+        run = 0
+        for _, lid, nbytes, sat in rows:
+            if lid != link_id:
+                continue
+            if sat and nbytes == 0:
+                run += 1
+            elif run:
+                runs.append(run)
+                run = 0
+            if not sat:
+                continue
+            saturated += 1
+            if nbytes is None:
+                unmeasured += 1
+            elif nbytes == 0:
+                zeros += 1
+        if run:
+            runs.append(run)
+        outages = [r for r in runs if r >= DROPOUT_RUN_BINS]
+        out[link_id] = {
+            "saturated_bins": saturated,
+            "unmeasured_bins": unmeasured,
+            "zero_byte_bins": zeros,
+            "outages_1s_or_longer": len(outages),
+            "outage_seconds": round(sum(outages) * BIN_MS / 1000, 1),
+            "longest_zero_run_s": round(max(runs, default=0) * BIN_MS / 1000, 1),
+        }
+    return out
 
 
 def is_bin_multiple(seconds: float) -> bool:
@@ -1050,6 +1382,14 @@ def warmup_check(
     """Was the warm-up long enough? Per link, compare the first saturated bin of every window
     with the window's later bins. If the first bin is materially lower, connections were still
     ramping up when the saturated window began, and the saturated bins understate capacity.
+
+    The ratio is only claimed when it can mean something:
+    - too_slow: the link averaged under DEAD_LINK_MBPS. A 100 ms bin then holds a handful of
+      packets (6 KB at 0.5 Mbps), so one packet arriving early or late moves a bin by more than
+      the 15% the check looks for.
+    - inconclusive: bin-to-bin noise is too large for the number of windows. The standard error
+      of the first-bin mean (later-bin SD / sqrt(windows), relative to the later mean) must be
+      at most half the 15% margin, unless the first bin is low even allowing for the noise.
     Pure, so it is unit-tested."""
     per_link: dict[str, JSONDict] = {}
     for link_id in link_ids:
@@ -1071,23 +1411,45 @@ def warmup_check(
             continue
         first_mean = statistics.fmean(firsts)
         ratio = first_mean / later_mean
+        later_sd = statistics.stdev(laters) if len(laters) > 1 else 0.0
+        se_rel = later_sd / later_mean / math.sqrt(len(firsts))
+        margin = 1 - WARMUP_RATIO_LIMIT
+        later_mbps = mbps(later_mean, BIN_MS / 1000)
+        if later_mbps < DEAD_LINK_MBPS:
+            status = "too_slow"
+        elif ratio + 2 * se_rel < WARMUP_RATIO_LIMIT:
+            status = "insufficient"  # low even allowing for the noise
+        elif 2 * se_rel > margin:
+            status = "inconclusive"
+        else:
+            status = "insufficient" if ratio < WARMUP_RATIO_LIMIT else "ok"
         per_link[link_id] = {
-            "status": "insufficient" if ratio < WARMUP_RATIO_LIMIT else "ok",
+            "status": status,
             "windows": len(firsts),
             "first_bin_mean_mbps": round(mbps(first_mean, BIN_MS / 1000), 3),
-            "later_bins_mean_mbps": round(mbps(later_mean, BIN_MS / 1000), 3),
+            "later_bins_mean_mbps": round(later_mbps, 3),
+            "later_bytes_per_bin": round(later_mean),
             "first_to_later_ratio": round(ratio, 3),
+            "ratio_standard_error": round(se_rel, 3),
             "ratio_by_position": [
                 round(statistics.fmean(p) / later_mean, 3) for p in by_position if p
             ],
         }
     statuses = [v["status"] for v in per_link.values()]
-    overall = (
-        "insufficient"
-        if "insufficient" in statuses
-        else ("ok" if statuses and all(s == "ok" for s in statuses) else "n/a")
-    )
-    return {"status": overall, "ratio_limit": WARMUP_RATIO_LIMIT, "links": per_link}
+    if "insufficient" in statuses:
+        overall = "insufficient"
+    elif statuses and all(s == "ok" for s in statuses):
+        overall = "ok"
+    elif "ok" in statuses:
+        overall = "ok_where_meaningful"
+    else:
+        overall = "not_meaningful"
+    return {
+        "status": overall,
+        "ratio_limit": WARMUP_RATIO_LIMIT,
+        "too_slow_below_mbps": DEAD_LINK_MBPS,
+        "links": per_link,
+    }
 
 
 def report_warmup(check: JSONDict, warmup_s: float, report: Report) -> None:
@@ -1099,6 +1461,20 @@ def report_warmup(check: JSONDict, warmup_s: float, report: Report) -> None:
         if r["status"] == "n/a":
             report.say(f"  {link_id}: n/a (no usable saturated windows)")
             continue
+        if r["status"] == "too_slow":
+            report.say(
+                f"  {link_id}: NOT CHECKED, too slow for a bin-level ratio to mean anything "
+                f"({r['later_bins_mean_mbps']:.2f} Mbps = ~{r['later_bytes_per_bin'] / 1000:.1f} "
+                f"KB per 100 ms bin, under {check['too_slow_below_mbps']:g} Mbps)"
+            )
+            continue
+        if r["status"] == "inconclusive":
+            report.say(
+                f"  {link_id}: NOT CHECKED, bin-to-bin noise too large over {r['windows']} "
+                f"window(s) to resolve a {1 - check['ratio_limit']:.0%} shortfall (standard "
+                f"error {r['ratio_standard_error']:.2f})"
+            )
+            continue
         report.say(
             f"  {link_id}: first bin {r['first_bin_mean_mbps']:.1f} Mbps vs later "
             f"{r['later_bins_mean_mbps']:.1f} Mbps = {r['first_to_later_ratio']:.2f} "
@@ -1108,7 +1484,7 @@ def report_warmup(check: JSONDict, warmup_s: float, report: Report) -> None:
         report.warn(
             "Warm-up was insufficient: the first saturated bins are still ramping up, so the "
             f"saturated bins understate capacity. Rerun with a longer --warmup-s (e.g. "
-            f"{warmup_s + 1:g})."
+            f"{max(2 * warmup_s, warmup_s + 1):g})."
         )
 
 
@@ -1126,26 +1502,79 @@ class TraceState:
     timer: JSONDict = field(default_factory=dict)
     warmup: JSONDict = field(default_factory=dict)
     connection_reuse: JSONDict = field(default_factory=dict)
+    unmeasured: Unmeasured | None = None
+    alive_s: float = 0.0  # last heartbeat, seconds since t0
+    dropouts: JSONDict = field(default_factory=dict)
+    kept_awake: bool = False
+
+
+HEARTBEAT_S = 0.02
+STALL_S = 0.25  # a heartbeat this late means the recorder itself stopped listening
+
+
+async def _heartbeat(state: TraceState, unmeasured: Unmeasured) -> None:
+    """Detects the recorder's own stalls (a blocked event loop, the machine suspending). Bins
+    in a stall are unmeasured for every link, never recorded as a dropout."""
+    loop = asyncio.get_running_loop()
+    last = loop.time()
+    while True:
+        await asyncio.sleep(HEARTBEAT_S)
+        now = loop.time()
+        if now - last > STALL_S:
+            unmeasured.stalls.append((last - unmeasured.t0, now - unmeasured.t0))
+        last = now
+        state.alive_s = now - unmeasured.t0
+
+
+async def _progress(
+    state: TraceState, bins: Bins, links: Sequence[LinkSpec], report: Report, every_s: float
+) -> None:
+    loop = asyncio.get_running_loop()
+    k = 1
+    while True:
+        await asyncio.sleep(max(0.0, bins.t0 + k * every_s - loop.time()))
+        lo, hi = (k - 1) * every_s, k * every_s
+        rates = "  ".join(
+            f"{link.id}={mbps(bins.total(link.id, lo, hi), every_s):.1f}" for link in links
+        )
+        report.say(
+            f"  t={hi:5.0f} s  mobile {state.budget.used / MB:6.1f} MB  "
+            f"last {every_s:g} s Mbps: {rates}"
+        )
+        k += 1
 
 
 async def trace_async(args: argparse.Namespace, state: TraceState, report: Report) -> None:
     loop = asyncio.get_running_loop()
     links = state.links
+    continuous = args.mode == "continuous"
     period = args.warmup_s + args.burst_s + args.idle_s
-    cycles = int(args.minutes * 60 // period)
+    cycles = int(round(args.minutes * 60, 6) // period)
     clients = {link.id: make_client(link, args.conns) for link in links}
     state.obs = {link.id: LinkObs() for link in links}
+    helpers: list[asyncio.Task[None]] = []
     try:
         state.public_ips = await lookup_public_ips(clients, not args.no_public_ip)
         state.started_at = now_iso()
         t0 = loop.time()
         state.bins = Bins(t0)
+        state.unmeasured = Unmeasured(t0, args.conns)
+        helpers.append(asyncio.create_task(_heartbeat(state, state.unmeasured)))
+        if continuous:
+            helpers.append(
+                asyncio.create_task(_progress(state, state.bins, links, report, every_s=30.0))
+            )
         for cycle in range(cycles):
             await asyncio.sleep(max(0.0, t0 + cycle * period - loop.time()))
             if state.budget.exhausted.is_set():
                 state.truncated = "budget"
                 break
             start = loop.time() - t0
+            ws = ceil_bin_ms(start + args.warmup_s)
+            planned_we = ws + round(args.burst_s * 1000)
+            # Registered up front so an interrupted session keeps its saturated window; it is
+            # clipped to what was actually recorded when the trace is written.
+            state.windows_ms.append((ws, planned_we))
             stopped = await run_load(
                 clients,
                 links,
@@ -1155,22 +1584,25 @@ async def trace_async(args: argparse.Namespace, state: TraceState, report: Repor
                 state.bins,
                 state.budget,
                 state.obs,
+                state.unmeasured,
             )
             end = loop.time() - t0
-            ws = ceil_bin_ms(start + args.warmup_s)
-            we = min(ws + round(args.burst_s * 1000), floor_bin_ms(end))
+            state.windows_ms.pop()
+            we = min(planned_we, floor_bin_ms(end))
             if we > ws:
                 state.windows_ms.append((ws, we))
             state.end_s = end
-            window_s = (we - ws) / 1000
-            rates = "  ".join(
-                f"{link.id}={mbps(state.bins.total(link.id, ws / 1000, we / 1000), window_s):.1f}"
-                for link in links
-            )
-            report.say(
-                f"  cycle {cycle + 1:>2}/{cycles}  mobile {state.budget.used / MB:7.1f} MB  "
-                f"saturated Mbps: {rates}"
-            )
+            if not continuous:
+                window_s = (we - ws) / 1000
+                rates = "  ".join(
+                    f"{link.id}="
+                    f"{mbps(state.bins.total(link.id, ws / 1000, we / 1000), window_s):.1f}"
+                    for link in links
+                )
+                report.say(
+                    f"  cycle {cycle + 1:>2}/{cycles}  mobile {state.budget.used / MB:7.1f} MB  "
+                    f"saturated Mbps: {rates}"
+                )
             if stopped:
                 state.truncated = "budget"
                 report.warn("Mobile budget reached; stopping the session early.")
@@ -1179,7 +1611,31 @@ async def trace_async(args: argparse.Namespace, state: TraceState, report: Repor
             await asyncio.sleep(max(0.0, t0 + cycles * period - loop.time()))
             state.end_s = cycles * period
     finally:
+        for task in helpers:
+            task.cancel()
+        await asyncio.gather(*helpers, return_exceptions=True)
         await asyncio.gather(*(c.aclose() for c in clients.values()))
+
+
+@contextlib.contextmanager
+def keep_awake(enabled: bool = True) -> Iterator[bool]:
+    """Stop Windows from sleeping on idle during a long recording (SetThreadExecutionState),
+    always restored afterwards. Closing the lid or choosing Sleep still suspends the machine;
+    the heartbeat would then mark those bins unmeasured."""
+    if not enabled or sys.platform != "win32":
+        yield False
+        return
+    import ctypes
+
+    es_continuous, es_system_required = 0x80000000, 0x00000001
+    set_state = ctypes.WinDLL("kernel32").SetThreadExecutionState
+    set_state.argtypes = [ctypes.c_uint32]
+    set_state.restype = ctypes.c_uint32
+    ok = bool(set_state(es_continuous | es_system_required))
+    try:
+        yield ok
+    finally:
+        set_state(es_continuous)
 
 
 def project_trace_mobile_bytes(
@@ -1202,6 +1658,27 @@ def project_trace_mobile_bytes(
     return total
 
 
+def trace_semantics(continuous: bool) -> str:
+    layout = (
+        "Continuous recording: the first warmup_s seconds (one cold start: connection setup "
+        "and slow start) carry bytes with saturated = 0, and every later bin has saturated = 1."
+        if continuous
+        else "Duty-cycled: saturated = 1 only for bins entirely inside a saturated window; "
+        "warm-up bins carry bytes with saturated = 0, idle bins are 0/0 because nothing was being "
+        "measured, not because the link stalled."
+    )
+    return (
+        "Goodput, replayed as capacity. bytes = bytes delivered to the application in the 100 ms "
+        f"bin. {layout} A saturated bin with bytes = 0 is a real measured zero: every connection "
+        "was trying and the link delivered nothing. An EMPTY bytes field means the recorder could "
+        "not measure that link in that bin (every connection was in a measurement fault such as "
+        "an HTTP error status or a DNS failure, or the recorder itself stalled): missing data, "
+        "never zero. Below about 1 Mbps a bin holds only a few packets, so a single zero bin can "
+        "be packet timing; zero runs of 1 s or more are outages (see dropouts). A single sample "
+        "of the author's own real conditions."
+    )
+
+
 def write_trace(out: Path, args: argparse.Namespace, state: TraceState) -> tuple[Path, Path]:
     links = state.links
     planned = int(args.minutes * 60 // (args.warmup_s + args.burst_s + args.idle_s)) * (
@@ -1210,11 +1687,25 @@ def write_trace(out: Path, args: argparse.Namespace, state: TraceState) -> tuple
     bins = state.bins
     end_s = state.end_s
     if state.truncated == "interrupted" and bins is not None:
-        end_s = (bins.max_index + 1) * BIN_MS / 1000
+        # Up to the last whole bin the recorder was alive for; the bin it was cut off in is
+        # partial and would read as a slowdown.
+        if state.alive_s:
+            end_s = floor_bin_ms(state.alive_s) / 1000
+        else:
+            end_s = bins.max_index * BIN_MS / 1000
     n_bins = ceil_bin_ms(end_s) // BIN_MS
     flags = saturated_flags(n_bins, state.windows_ms)
     data = bins.data if bins is not None else {}
-    rows = trace_rows([link.id for link in links], data, n_bins, flags)
+    link_ids = [link.id for link in links]
+    um = state.unmeasured
+    gaps: dict[str, set[int]] = {}
+    if um is not None:
+        for link_id in link_ids:
+            gaps[link_id] = {
+                k for k in unmeasured_bins(um.intervals.get(link_id, []) + um.stalls) if k < n_bins
+            }
+    rows = trace_rows(link_ids, data, n_bins, flags, gaps)
+    state.dropouts = dropout_summary(rows, link_ids)
 
     name = f"mobile-{dt.date.today():%Y%m%d}-{args.session}"
     csv_path = out / "traces" / f"{name}.csv"
@@ -1222,8 +1713,9 @@ def write_trace(out: Path, args: argparse.Namespace, state: TraceState) -> tuple
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         f.write("t_ms,link,bytes,saturated\n")
-        f.writelines(f"{t},{link_id},{n},{s}\n" for t, link_id, n, s in rows)
+        f.writelines(f"{t},{link_id},{'' if n is None else n},{s}\n" for t, link_id, n, s in rows)
 
+    continuous = args.mode == "continuous"
     meta = {
         "recorded_at": state.started_at,
         "duration_s": round(n_bins * BIN_MS / 1000, 3),
@@ -1231,20 +1723,31 @@ def write_trace(out: Path, args: argparse.Namespace, state: TraceState) -> tuple
         "truncated": state.truncated,
         "sample_ms": BIN_MS,
         "connections_per_link": args.conns,
-        "duty_cycle": {
+        "mode": args.mode,
+        "warmup_s": args.warmup_s,
+        "saturated_windows_ms": [[ws, min(we, n_bins * BIN_MS)] for ws, we in state.windows_ms],
+        "duty_cycle": None
+        if continuous
+        else {
             "warmup_s": args.warmup_s,
             "saturated_s": args.burst_s,
             "idle_s": args.idle_s,
             "period_s": args.warmup_s + args.burst_s + args.idle_s,
-            "saturated_windows_ms": state.windows_ms,
         },
-        "semantics": (
-            "Goodput, replayed as capacity. bytes = bytes delivered to the application in the "
-            "100 ms bin. saturated = 1 only for bins entirely inside a saturated window; warm-up "
-            "bins carry bytes but saturated = 0 (connection setup and slow start), idle bins are "
-            "0/0 because nothing was being measured, not because the link stalled. A single "
-            "sample of the author's own real conditions."
-        ),
+        "semantics": trace_semantics(continuous),
+        "unmeasured": {
+            "bins_per_link": {i: len(g) for i, g in gaps.items()},
+            "intervals_s_per_link": {
+                i: [[round(a, 3), round(b, 3)] for a, b in um.intervals.get(i, [])]
+                for i in link_ids
+            }
+            if um
+            else {},
+            "recorder_stalls_s": [[round(a, 3), round(b, 3)] for a, b in um.stalls] if um else [],
+        },
+        "error_counts": um.errors if um else {},
+        "dropouts": state.dropouts,
+        "kept_awake": state.kept_awake,
         "links": [
             {
                 **link.to_json(),
@@ -1262,10 +1765,15 @@ def write_trace(out: Path, args: argparse.Namespace, state: TraceState) -> tuple
         "recorder_git_sha": git_sha(),
         "timer_resolution_ms": state.timer.get("timer_resolution_ms"),
         "timer": state.timer,
-        "connections_between_cycles": (
-            "closed: each cycle cancels its downloads mid-body, which closes the connections, so "
-            "every warm-up starts with new TCP connections (handshake + slow start from the "
-            "initial window). connection_reuse shows requests vs distinct local ports."
+        "connections": (
+            "One cold start at t = 0. A connection makes a new request only when its 1 GB body "
+            "ends or after an error, so connection_reuse (requests vs distinct local ports) "
+            "counts reconnects; see error_counts for why."
+            if continuous
+            else "closed between cycles: each cycle cancels its downloads mid-body, which closes "
+            "the connections, so every warm-up starts with new TCP connections (handshake + slow "
+            "start from the initial window). connection_reuse shows requests vs distinct local "
+            "ports."
         ),
         "connection_reuse": state.connection_reuse,
         "warmup_check": state.warmup,
@@ -1643,7 +2151,7 @@ def timer_job(args: argparse.Namespace, report: Report) -> JSONDict:
 # --- redaction -------------------------------------------------------------------------------
 
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
-_CSV_ROW = re.compile(r"^\d+,[a-z][a-z0-9_-]*,\d+,[01]$")
+_CSV_ROW = re.compile(r"^\d+,[a-z][a-z0-9_-]*,\d*,[01]$")  # empty bytes = unmeasured
 
 
 def _walk(obj: Any, fn: Callable[[str], str]) -> Any:
@@ -1970,10 +2478,37 @@ def cmd_throughput(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_trace(args: argparse.Namespace) -> int:
+def resolve_trace_timing(args: argparse.Namespace) -> None:
+    """Fill in warm-up / burst / idle for the chosen mode, rejecting combinations that would
+    not record what they look like they record."""
+    total = args.minutes * 60
+    if not is_bin_multiple(total):
+        raise SystemExit(f"--minutes must give a multiple of {BIN_MS} ms")
+    if args.mode == "continuous":
+        if args.burst_s is not None or args.idle_s is not None:
+            raise SystemExit("--burst-s and --idle-s apply to --mode duty-cycled only")
+        args.warmup_s = 10.0 if args.warmup_s is None else args.warmup_s
+        args.burst_s = round(total - args.warmup_s, 6)
+        args.idle_s = 0.0
+        if args.burst_s <= 0:
+            raise SystemExit("--warmup-s must be shorter than the session")
+    else:
+        args.warmup_s = 1.0 if args.warmup_s is None else args.warmup_s
+        args.burst_s = 5.0 if args.burst_s is None else args.burst_s
+        args.idle_s = 24.0 if args.idle_s is None else args.idle_s
+        if args.idle_s <= 0:
+            raise SystemExit(
+                "--idle-s 0 in duty-cycled mode still cancels every connection at the end of "
+                "each cycle, so it records a cold start every warm-up + burst seconds rather "
+                "than one continuous window. Use --mode continuous."
+            )
     for name in ("warmup_s", "burst_s", "idle_s"):
         if not is_bin_multiple(getattr(args, name)):
             raise SystemExit(f"--{name.replace('_', '-')} must be a multiple of {BIN_MS} ms")
+
+
+def cmd_trace(args: argparse.Namespace) -> int:
+    resolve_trace_timing(args)
     if not re.match(r"^[a-z0-9-]+$", args.session):
         raise SystemExit("--session must be lowercase letters, digits or '-', e.g. am or pm")
     report = Report()
@@ -1984,13 +2519,21 @@ def cmd_trace(args: argparse.Namespace) -> int:
     out = Path(args.out)
 
     period = args.warmup_s + args.burst_s + args.idle_s
-    cycles = int(args.minutes * 60 // period)
+    cycles = int(round(args.minutes * 60, 6) // period)
     loaded = cycles * (args.warmup_s + args.burst_s)
     projected = project_trace_mobile_bytes(out, links, loaded)
-    report.say(
-        f"Trace session '{args.session}': {cycles} cycles of {args.warmup_s:g} s warm-up + "
-        f"{args.burst_s:g} s saturated + {args.idle_s:g} s idle, {args.conns} connections per link"
-    )
+    if args.mode == "continuous":
+        report.say(
+            f"Trace session '{args.session}': continuous, {args.minutes:g} min: "
+            f"{args.warmup_s:g} s warm-up (saturated=0), then {args.burst_s:g} s saturated; "
+            f"{args.conns} connections per link; progress every 30 s"
+        )
+    else:
+        report.say(
+            f"Trace session '{args.session}': {cycles} cycles of {args.warmup_s:g} s warm-up + "
+            f"{args.burst_s:g} s saturated + {args.idle_s:g} s idle, {args.conns} connections "
+            "per link"
+        )
     if projected is None:
         report.say("  No mobile projection available (run `throughput` first to get one).")
     else:
@@ -2010,7 +2553,9 @@ def cmd_trace(args: argparse.Namespace) -> int:
     )
     exit_code = 0
     try:
-        with timer_period_1ms(True):  # cycles start on time, not on a 15.6 ms tick
+        # cycles start on time, not on a 15.6 ms tick; the machine must not sleep on idle
+        with timer_period_1ms(True), keep_awake(True) as awake:
+            state.kept_awake = awake
             state.timer = timer_environment()
             asyncio.run(trace_async(args, state, report))
     except KeyboardInterrupt:
@@ -2022,26 +2567,53 @@ def cmd_trace(args: argparse.Namespace) -> int:
         return exit_code or 1
     state.warmup = warmup_check(state.bins.data, state.windows_ms, [lk.id for lk in links])
     report_warmup(state.warmup, args.warmup_s, report)
+    wall_s = max(state.alive_s, state.end_s, 1e-9)
     connection_reuse = {
         link.id: {
             "requests": state.obs[link.id].requests,
             "distinct_local_ports": len(state.obs[link.id].local_ports),
+            "rejected_by_server": state.obs[link.id].rejected,
+            "effective_connections_mean": round(state.obs[link.id].body_seconds / wall_s, 2),
         }
         for link in links
         if link.id in state.obs
     }
     state.connection_reuse = connection_reuse
+    errors = state.unmeasured.errors if state.unmeasured else {}
     for link_id, c in connection_reuse.items():
+        e = errors.get(link_id, {"link": 0, "measurement": 0})
         report.say(
-            f"  {link_id}: {c['requests']} requests on {c['distinct_local_ports']} distinct local "
-            "ports (equal means every request opened a new connection)"
+            f"  {link_id}: {c['effective_connections_mean']:.1f} of {args.conns} connections "
+            f"downloading on average; {c['requests']} requests on {c['distinct_local_ports']} "
+            f"local ports; {c['rejected_by_server']} rejected by the server; errors: "
+            f"{e['link']} link (outage), {e['measurement']} measurement"
+        )
+    if any(c["rejected_by_server"] for c in connection_reuse.values()):
+        report.warn(
+            "The server turned requests away (HTTP 429/503): it caps connections per client IP, "
+            "so fewer connections were downloading than --conns asked for (see "
+            "effective_connections_mean). Record with --conns at or below the cap."
         )
     csv_path, meta_path = write_trace(out, args, state)
+    report.say("Dropouts (saturated bins only; empty bytes = unmeasured, never zero):")
+    for link_id, d in state.dropouts.items():
+        report.say(
+            f"  {link_id}: {d['zero_byte_bins']} zero-byte bins of {d['saturated_bins']}, "
+            f"{d['outages_1s_or_longer']} outages >= 1 s ({d['outage_seconds']:g} s total, "
+            f"longest {d['longest_zero_run_s']:g} s), {d['unmeasured_bins']} bins unmeasured"
+        )
+    if state.unmeasured and state.unmeasured.stalls:
+        report.warn(
+            f"The recorder itself stalled {len(state.unmeasured.stalls)} time(s); those bins are "
+            "unmeasured for every link (empty bytes), not dropouts."
+        )
     report.say(f"Wrote {csv_path.name} and {meta_path.name} in {csv_path.parent}")
     params = {
         "url": args.url,
         "session": args.session,
+        "mode": args.mode,
         "minutes": args.minutes,
+        "warmup_s": args.warmup_s,
         "connections_per_link": args.conns,
         "budget_mb": args.budget_mb,
     }
@@ -2054,6 +2626,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
         "public_ips": state.public_ips,
         "warmup_check": state.warmup,
         "connection_reuse": state.connection_reuse,
+        "dropouts": state.dropouts,
     }
     write_json(
         out / f"trace-{args.session}-{stamp()}.json",
@@ -2187,16 +2760,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_throughput)
 
-    p = sub.add_parser("trace", parents=[common, net], help="job 2: duty-cycled trace recorder")
+    p = sub.add_parser("trace", parents=[common, net], help="job 2: per-link trace recorder")
     p.add_argument("--session", required=True, help="session label, e.g. am or pm")
-    p.add_argument("--minutes", type=float, default=10.0)
-    p.add_argument("--burst-s", type=float, default=5.0, help="saturated seconds per cycle")
-    p.add_argument("--idle-s", type=float, default=24.0, help="idle seconds per cycle")
+    p.add_argument("--minutes", type=float, default=20.0)
+    p.add_argument(
+        "--mode",
+        choices=["continuous", "duty-cycled"],
+        default="continuous",
+        help="continuous: one cold start, then saturated for the whole session (default)",
+    )
+    p.add_argument(
+        "--burst-s", type=float, default=None, help="duty-cycled: saturated seconds per cycle (5)"
+    )
+    p.add_argument(
+        "--idle-s", type=float, default=None, help="duty-cycled: idle seconds per cycle (24)"
+    )
     p.add_argument(
         "--warmup-s",
         type=float,
-        default=1.0,
-        help="seconds of load before each saturated window, recorded with saturated=0",
+        default=None,
+        help="seconds of load before saturated bins begin, recorded with saturated=0 "
+        "(default 10 continuous, 1 duty-cycled)",
     )
     p.add_argument("--conditions", default="", help="free-text note: place, weather, signal, ...")
     p.add_argument("--allow-truncate", action="store_true")

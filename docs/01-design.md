@@ -236,10 +236,13 @@ virtual timers fire early; the virtual loop overrides it to 1 ns.
   on Windows). One writer thread owning one handle removes the race.
 - The writer emits `writer_blocked` events. The estimator excludes writer-blocked intervals, so a
   slow disk cannot masquerade as a slow link in the estimator or in the decomposition.
-- **Sparse output files.** Writing far past the end of a fresh file makes NTFS fill the gap with
-  zeros, which stalled one 1 MB write for seconds (section 7). So `disk_writer` marks the output
-  file sparse with `FSCTL_SET_SPARSE` (via ctypes) right after creating it, and **never pre-sizes it
-  with `os.ftruncate`/`truncate`**, which on Windows writes the zeros itself.
+- **Sparse output files are mandatory.** Writing far past the end of a fresh file makes NTFS fill
+  the gap with zeros first: one 1 MB write at the end of a fresh 4 GiB file took **22.5 s**, against
+  **0.002 s** on a sparse file (section 7). In the writer thread a stall like that fills the byte
+  queue, backpressure stops every link, and the run measures the disk. So `disk_writer` marks the
+  output file sparse with `FSCTL_SET_SPARSE` (via ctypes) right after creating it, and **never
+  pre-sizes it with `os.ftruncate`/`truncate`**, which on Windows writes the zeros itself (4.0 s for
+  4 GiB, measured).
 - **Consequence: file size and file contents never indicate completion.** A sparse, partly
   written file reads as zeros in its holes instead of raising an error, and its size can already
   be the final size. Neither "the file is the right size" nor "this region is non-zero" means a
@@ -352,38 +355,56 @@ it assumes, and adaptive would win for reasons that say nothing about real netwo
 
 ### Recorded traces
 
-- Two sessions at different times of day (mid-morning and evening peak), 10 minutes each.
-- **Duty-cycled** so 10 minutes of coverage fits the mobile budget: every 30 s cycle is 1 s
-  warm-up + 5 s saturated + 24 s idle, all links at once. The warm-up is taken out of the idle
-  time: after 24 s idle the connections are new, so the first second is connection setup and slow
-  start (several RTTs at 100-200 ms), which would understate capacity if it were counted as
-  saturated. Warm-up bins are recorded with their bytes but `saturated = 0`.
-- About 6 connections per link to saturate it, with all links recorded at the same time, so
-  correlated drops are real.
+- Two sessions at different times of day (mid-morning and evening peak), 20 minutes each.
+- **Continuous**: one cold start, a 10 s warm-up recorded with `saturated = 0`, then every link
+  saturated for the rest of the session, all links at once. (The original plan was duty-cycled,
+  5 s saturated in every 30 s, purely to fit the mobile data budget. The measured mobile link runs
+  at about 0.5 Mbps, so 20 continuous minutes cost about 75 MB and the constraint is gone.)
+  Continuous recording is strictly better for what the trace is for: rᵢ(t) is measured at every
+  instant instead of sampled every 30 s, so the replayer needs no interpolation between windows;
+  there is one cold start instead of twenty; regime changes are not aliased by a sampling grid; and
+  a phone hotspot has no idle periods in which to sleep. It is also the load a download imposes, so
+  a carrier throttle triggered by sustained load is a legitimate feature of the trace, not a flaw.
+- **Connections per link = the server's per-IP cap.** Public speed-test mirrors turn away
+  connections beyond a small per-client-IP limit with HTTP 429/503 (Hetzner: 2). Each link has its
+  own public IP, so each gets its own cap; asking for more only adds rejected requests. The
+  recorder backs off on rejection (honouring `Retry-After`) and records the effective number of
+  connections, measured as connection-seconds with a body streaming.
 - 100 ms bins. A 1-second average would smooth away the burstiness that matters.
 - Traces are not looped to make them longer; looping would add an artificial repeating pattern.
-  How the replayer bridges the idle gaps between saturated windows is decided in step 3 and
-  documented there.
 - A recording measures **goodput, replayed as capacity**. That wording appears in the README and in
   the metric definitions, along with "two samples of my own real conditions".
+- **Measured zero vs missing.** A saturated bin with 0 bytes is real data: every connection was
+  trying and the link delivered nothing. Those dropouts are the most valuable part of a trace. A
+  bin the recorder could not measure has an **empty** `bytes` field instead: every connection of
+  that link was in a measurement fault (an HTTP error status such as the server refusing it, a DNS
+  failure, a refused connection), or the recorder itself stalled (a 20 ms heartbeat arriving more
+  than 250 ms late). Timeouts, resets and "network unreachable" are link faults, so the zero bytes
+  that follow them stay zeros. The replayer must treat empty as unknown, never as zero.
+- **Below about 1 Mbps a 100 ms bin holds a few packets** (6 KB at 0.5 Mbps), so a single
+  zero-byte bin can be packet timing rather than an outage. The meta file summarises zero-byte runs
+  of at least 1 s as outages, and step 3 decides how the replayer smooths a link that slow.
 
 Trace format, fixed: CSV `t_ms,link,bytes,saturated`, one row per 100 ms bin per link.
 
 - `t_ms`: integer, monotonic, starts at 0, bin width exactly 100.
 - `link`: stable string id (for example `mobile0`), the same ids as the scenario YAML.
-- `bytes`: integer bytes delivered to the application in that bin.
-- `saturated`: 1 only for bins lying entirely inside a saturated window, else 0. An idle bin is
-  0/0 because nothing was being measured, not because the link stalled; a saturated bin with 0
-  bytes is a real stall.
+- `bytes`: integer bytes delivered to the application in that bin, or **empty** if the recorder
+  could not measure that link in that bin (missing, not zero; see above).
+- `saturated`: 1 only for bins lying entirely inside a saturated window, else 0. Warm-up bins
+  carry bytes with `saturated = 0`; a saturated bin with 0 bytes is a real stall.
 - Every link has a row for every bin, including zeros. Rows are never sparse: the replayer must not
   have to guess whether a gap is a stall or a missing sample.
 
 Sidecar `<name>.meta.json`: `recorded_at` (ISO 8601, local time zone), `duration_s` (and
-`planned_duration_s`, `truncated`), `connections_per_link`, `duty_cycle` (including the exact
-`saturated_windows_ms`), links (id, interface name, carrier/ISP label, whether mobile, local IP,
-server IPs reached, whether binding was verified), `server_url`, `total_bytes_per_link`,
-`sample_ms`, mobile bytes used and budget, recorder git SHA, a `semantics` statement, and a
-free-text `conditions` note.
+`planned_duration_s`, `truncated`), `mode` (`continuous`, or `duty-cycled` with its `duty_cycle`),
+`warmup_s`, the exact `saturated_windows_ms`, `connections_per_link` (requested) with the effective
+count and server rejections per link (`connection_reuse`), links (id, interface name, carrier/ISP
+label, whether mobile, local IP, server IPs reached, whether binding was verified), `server_url`,
+`total_bytes_per_link`, `sample_ms`, `unmeasured` (bins and intervals per link, recorder stalls),
+`error_counts` (link vs measurement), `dropouts` (zero-byte bins, outages of 1 s or more),
+`warmup_check`, timer conditions, whether sleep was suppressed (`kept_awake`), mobile bytes used and
+budget, recorder git SHA, a `semantics` statement, and a free-text `conditions` note.
 
 ## 6. Real-world sanity check
 
@@ -398,9 +419,12 @@ says so.
   before and after each run.
 - HTTP is the primary protocol, plus one HTTPS run to measure per-connection handshake cost as part
   of overhead loss. The HTTPS run is the first thing cut if it gets fiddly with pinned IPs.
-- Mobile data budget: 4 GB total, 1.5 GB for trace recording (about 1.25 GB expected with the duty
-  cycle) and 2.5 GB for real-world runs. The recorder and the runner take `--budget-mb` and stop
-  hard on it; the budget applies to the mobile link only. MB means 10^6 bytes, as carriers count.
+- Mobile data budget: 4 GB total, 1.5 GB for trace recording (about 150 MB expected for two
+  continuous 20-minute sessions at the measured ~0.5 Mbps) and 2.5 GB for real-world runs. The
+  recorder and the runner take `--budget-mb` and stop hard on it; the budget applies to the mobile
+  link only. MB means 10^6 bytes, as carriers count.
+- **The feasibility verdict was a no-go (section 7), so this check is not run.** The downloader is
+  still built in step 8; only the multi-link real-world comparison is dropped.
 
 ## 7. Feasibility (day 0)
 
@@ -409,7 +433,7 @@ says so.
 
 1. Solo, then all links together, then solo again, per link (bound to its local IP), with the
    go/no-go verdict: combined ≥ 1.5 × the best single link (the mean of its two solo runs).
-2. The duty-cycled trace recorder (section 5).
+2. The trace recorder, continuous by default (section 5).
 3. The loopback ceiling of Python + httpx + an event pipeline (256 KB pieces, one JSON event per
    piece, 1 MB block assembly, a byte-bounded queue), with the server in a separate process.
 4. NTFS zero-fill cost when writing at a high offset in a fresh large file.
@@ -449,6 +473,22 @@ reports stacking efficiency (combined ÷ sum of solo speeds) to separate "the li
 mobile link to reach at least half the home link's speed. Job 1 also confirms that each link's
 connections really left from its own local IP; if not, the verdict is INVALID.
 
+The verdict refuses to read an unstable measurement, in this order:
+
+1. **INVALID** if binding failed.
+2. A link under **1 Mbps** on its own is **effectively dead** and excluded from the stacking claim.
+   With fewer than two live links the verdict is **NO-GO**: there is nothing to stack, whatever
+   the remaining link did. (A link whose solo phases the server refused is never declared dead.)
+3. **INVALID** if, on a live link, any phase measured 0.0 Mbps (a dropout, kept as data); solo
+   before and after differ by more than **1.5×**; the server refused every connection for part of a
+   phase (HTTP 429/503: that phase measured the server); or stacking efficiency exceeds **100%**
+   (links cannot add more together than apart, so conditions changed between phases). Smaller solo
+   drift (over 25%) is only noted.
+4. Otherwise **GO** or **NO-GO** as above.
+
+Each phase also reports how many connections were really downloading: public mirrors cap
+connections per client IP and answer the rest with 429, so `--conns` should not exceed the cap.
+
 Each link's public IP is recorded in full (and redacted on commit). The verdict reports two signals
 of a shared upstream: links with the **same public IP** (strong), and links with different public
 IPs in the **same /24**, labelled as a weaker signal because carrier-grade NAT can hand out
@@ -456,21 +496,46 @@ different addresses from one upstream block.
 
 ### What the feasibility measurements changed
 
-From smoke runs on 2026-11-01. The official numbers come from the full runs in
-`docs/00-feasibility.md`.
+From the runs of 2026-11-01. The full record is in `docs/00-feasibility.md`.
+
+- **Verdict: NO-GO on the real-world tier.** The USB-tethered mobile link delivered 0.4-0.5 Mbps
+  (effectively dead), so there is no second link to stack with home Wi-Fi. Scope is unchanged: the
+  simulator carries the result, as planned for a no-go.
+- **Public mirrors cap connections per client IP.** Hetzner Singapore serves 2 concurrent downloads
+  per IP and answers the rest with HTTP 429; OVH Singapore does the same, and after repeated
+  rejected requests it refused this machine entirely for at least 5 s. Every throughput run so far
+  hit this: most of the apparent Wi-Fi instability (including OVH's 0.0 Mbps phase) was the server,
+  not the line. Hence the recorder's backoff, effective-connection count and "unmeasured" bins, and
+  `--conns 2` for traces. A clean run at 2 connections held 30.7 Mbps on Wi-Fi with no rejections.
+  For the real downloader this confirms the design: the author's own VPS, with the per-IP
+  connection cap set explicitly (section 6), never a public mirror.
 
 - **Windows timer resolution.** `asyncio.sleep` on Windows rounds up to the 15.6 ms system tick
   (a 20 ms sleep took ~32 ms, 50 ms took ~64 ms). With `timeBeginPeriod(1)` every tested delay was
   met within about 1-2 ms at p95. **Any real-time code that needs sub-16 ms timing (the loopback
   shaper above all) must run under `timeBeginPeriod(1)`.**
-- **NTFS zero-fill.** One 1 MB write at the end of a fresh 1 GiB file stalled for 0.6-3.8 s while
-  NTFS filled the gap; with `FSCTL_SET_SPARSE` it took 0.016 s. That settles it: sparse output
-  files are in scope for the step 8 `disk_writer` (section 4). The official 4 GiB run on the
-  download drive is recorded in `00-feasibility.md`.
-- **Never pre-size with `truncate`.** On Windows, `os.ftruncate` to extend a file writes the zeros
-  itself (~1.4 s per GiB).
-- **Loopback ceiling.** With the event pipeline, one Python process sustained about 2.3-2.9 Gbps
-  over loopback at 100% CPU. Loopback-tier aggregate rates stay below half of the official figure.
+- **NTFS zero-fill: sparse files are mandatory.** Official run, D: (NTFS), fresh 4 GiB file, one
+  1 MB write:
+
+  | Case | Total | of which |
+  |---|---|---|
+  | write at offset 0 | 0.004 s | |
+  | pre-size with `os.ftruncate`, then write at the end | 4.365 s | 4.019 s pre-sizing |
+  | seek past the end, then write at the end | **22.489 s** | 22.358 s in the write |
+  | `FSCTL_SET_SPARSE`, then write at the end | **0.002 s** | |
+
+  Sparse is about four orders of magnitude faster than an unprepared high-offset write (the 0.002 s
+  figure is near the timer's resolution, so the exact factor is loose). The 1 GiB smoke run had
+  shown 0.6-3.8 s; the stall grows with the gap. Sparse output files are therefore mandatory in the
+  step 8 `disk_writer` (section 4).
+- **Pre-sizing with `truncate` is banned.** On Windows, `os.ftruncate` to extend a file writes the
+  zeros itself (4.0 s for 4 GiB, about 1 s per GiB): it moves the stall, it does not remove it.
+- **Loopback ceiling.** With the event pipeline, one Python process sustained **3.0-3.1 Gbps** over
+  loopback (7.3-7.4 Gbps reading the body only), CPU-bound on the client at 95-100% in every
+  configuration tested, so the pipeline rather than the network stack sets the ceiling.
+  Loopback-tier aggregate rates stay below about **1.5 Gbps**, half the measured ceiling, so Python
+  is never the binding constraint. (Official run, `feasibility-out/loopback.json`; the 2.3-2.9 Gbps
+  figure quoted earlier was from a smoke test.)
 
 ### Windows source-IP binding
 

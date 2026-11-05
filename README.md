@@ -15,13 +15,16 @@ tail, overhead, rate, duplicate and local losses, so it's clear which losses a s
 actually remove.
 
 Headline numbers will come from a deterministic virtual-time simulator, cross-validated against a
-loopback HTTP tier, with a small real-world sanity check. The benchmark protocol will be committed
-and tagged `protocol-v1` before any benchmark runs.
+loopback HTTP tier and driven partly by throughput traces recorded on real links. A small
+real-world multi-link check was planned, but the feasibility check found no usable second link on
+the author's machine (the mobile link ran at 0.5 Mbps), so it is not run; see
+[docs/00-feasibility.md](docs/00-feasibility.md). The benchmark protocol will be committed and
+tagged `protocol-v1` before any benchmark runs.
 
 ## Build plan
 
 1. Virtual clock and event loop ✅
-2. Feasibility script: do my links actually add up? (script ✅, measurements pending)
+2. Feasibility script: do my links actually add up? (script ✅, verdict: no-go; traces pending)
 3. Link simulator
 4. Block map and in-memory sink
 5. Schedulers (static, static-oracle, work stealing, adaptive) and endgame
