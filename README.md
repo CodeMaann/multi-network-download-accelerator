@@ -24,7 +24,7 @@ tagged `protocol-v1` before any benchmark runs.
 ## Build plan
 
 1. Virtual clock and event loop ✅
-2. Feasibility script: do my links actually add up? (script ✅, verdict: no-go; traces pending)
+2. Feasibility script: do my links actually add up? (script ✅, verdict: no-go; traces: pm done, midday pending)
 3. Link simulator
 4. Block map and in-memory sink
 5. Schedulers (static, static-oracle, work stealing, adaptive) and endgame

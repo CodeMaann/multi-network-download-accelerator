@@ -1,0 +1,298 @@
+{
+  "job": "throughput",
+  "started_at": "2026-11-05T22:45:34+05:30",
+  "finished_at": "2026-11-05T22:46:16+05:30",
+  "recorder_git_sha": "093f460ad45f-dirty",
+  "python": "3.12.4",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "timer": {
+    "timer_period_requested_ms": 1,
+    "timer_resolution_ms": 1.0,
+    "asyncio_sleep_1ms_p50_ms": 2.065
+  },
+  "params": {
+    "url": "http://sin-speed.hetzner.com/1GB.bin",
+    "connections_per_link": 2,
+    "duration_s": 8.0,
+    "warmup_s": 2.0,
+    "budget_mb": 350.0,
+    "go_ratio": 1.5
+  },
+  "results": {
+    "verdict": {
+      "status": "INVALID",
+      "go": null,
+      "suspect": false,
+      "reasons": [
+        "mobile0: solo speed went from 2.7 to 13.9 Mbps between the before and after measurements (5.10x, limit 1.5x), so the link changed under the test and no ratio computed from it holds.",
+        "Combined (49.5 Mbps) exceeds the sum of the solo speeds (38.3 Mbps), stacking efficiency 129%. Links cannot add more together than apart, so conditions changed between phases.",
+        "Rerun the throughput job; this run cannot support either verdict."
+      ],
+      "notes": [],
+      "public_ips": {
+        "wifi0": "public-ip-C",
+        "mobile0": "public-ip-D"
+      },
+      "public_ip_sharing": {
+        "exact": [],
+        "same_24": []
+      },
+      "solo_mbps": {
+        "wifi0": 30.0,
+        "mobile0": 8.3
+      },
+      "dead_links": {},
+      "live_links": [
+        "wifi0",
+        "mobile0"
+      ],
+      "best_link": "wifi0",
+      "best_single_mbps": 30.0,
+      "combined_mbps": 49.54,
+      "gain": 1.652,
+      "stacking_efficiency": 1.294
+    },
+    "phases": [
+      {
+        "phase": "solo-before",
+        "link": "wifi0",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "wifi0": 30.61784
+        },
+        "effective_connections": {
+          "wifi0": 1.95
+        },
+        "rejected_by_server": {
+          "wifi0": 0
+        },
+        "all_connections_refused_s": {
+          "wifi0": 0
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            29.563,
+            31.015,
+            30.794,
+            30.689,
+            30.736,
+            30.736
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-before",
+        "link": "mobile0",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "mobile0": 2.72296
+        },
+        "effective_connections": {
+          "mobile0": 1.86
+        },
+        "rejected_by_server": {
+          "mobile0": 0
+        },
+        "all_connections_refused_s": {
+          "mobile0": 0
+        },
+        "series_1s_mbps": {
+          "mobile0": [
+            4.906,
+            3.2,
+            2.356,
+            1.881,
+            2.201,
+            1.794
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "combined",
+        "link": "all",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "wifi0": 28.292704,
+          "mobile0": 21.247168
+        },
+        "effective_connections": {
+          "wifi0": 1.93,
+          "mobile0": 1.93
+        },
+        "rejected_by_server": {
+          "wifi0": 0,
+          "mobile0": 0
+        },
+        "all_connections_refused_s": {
+          "wifi0": 0,
+          "mobile0": 0
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            29.876,
+            30.84,
+            25.172,
+            24.684,
+            28.784,
+            30.271
+          ],
+          "mobile0": [
+            14.292,
+            20.333,
+            22.553,
+            20.585,
+            28.031,
+            21.69
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-after",
+        "link": "wifi0",
+        "measured_seconds": 5.985,
+        "mbps": {
+          "wifi0": 29.374796992478345
+        },
+        "effective_connections": {
+          "wifi0": 1.95
+        },
+        "rejected_by_server": {
+          "wifi0": 0
+        },
+        "all_connections_refused_s": {
+          "wifi0": 0
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            30.12,
+            30.864,
+            28.517,
+            25.95,
+            29.47
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-after",
+        "link": "mobile0",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "mobile0": 13.876592
+        },
+        "effective_connections": {
+          "mobile0": 1.94
+        },
+        "rejected_by_server": {
+          "mobile0": 0
+        },
+        "all_connections_refused_s": {
+          "mobile0": 0
+        },
+        "series_1s_mbps": {
+          "mobile0": [
+            7.834,
+            10.559,
+            15.727,
+            20.158,
+            28.826,
+            0.155
+          ]
+        },
+        "budget_stopped": false
+      }
+    ],
+    "links": [
+      {
+        "id": "wifi0",
+        "interface": "Wi-Fi",
+        "local_ip": "192.168.1.36",
+        "mobile": false,
+        "isp": null,
+        "kind": "wifi"
+      },
+      {
+        "id": "mobile0",
+        "interface": "Ethernet 2",
+        "local_ip": "10.179.195.159",
+        "mobile": true,
+        "isp": null,
+        "kind": "mobile"
+      }
+    ],
+    "observed": {
+      "wifi0": {
+        "server_ips": [
+          "5.223.7.195"
+        ],
+        "client_ips": [
+          "192.168.1.36"
+        ],
+        "distinct_local_ports": 6,
+        "http_statuses": [
+          200
+        ],
+        "final_urls": [
+          "http://sin-speed.hetzner.com/1GB.bin"
+        ],
+        "requests": 6,
+        "rejected_by_server": 0,
+        "body_seconds": 46.641,
+        "errors": []
+      },
+      "mobile0": {
+        "server_ips": [
+          "5.223.7.195"
+        ],
+        "client_ips": [
+          "10.179.195.159"
+        ],
+        "distinct_local_ports": 6,
+        "http_statuses": [
+          200
+        ],
+        "final_urls": [
+          "http://sin-speed.hetzner.com/1GB.bin"
+        ],
+        "requests": 6,
+        "rejected_by_server": 0,
+        "body_seconds": 45.812,
+        "errors": []
+      }
+    },
+    "public_ips": {
+      "wifi0": "public-ip-C",
+      "mobile0": "public-ip-D"
+    },
+    "mobile_bytes": 32549136
+  },
+  "warnings": [],
+  "report": [
+    "Pre-flight checks",
+    "  fMinimizeConnections = 0 (simultaneous connections allowed)",
+    "  wifi0      Wi-Fi                  ip=192.168.1.36    gw=192.168.1.1     kind=wifi",
+    "  mobile0    Ethernet 2             ip=10.179.195.159  gw=10.179.195.84   kind=mobile MOBILE",
+    "",
+    "Throughput: 5 phases x 8 s, first 2 s of each discarded, 2 connections per link, http://sin-speed.hetzner.com/1GB.bin",
+    "  solo-before  wifi0      Mbps: wifi0=30.6 (1.9 of 2 conns)",
+    "  solo-before  mobile0    Mbps: mobile0=2.7 (1.9 of 2 conns)",
+    "  combined     all        Mbps: wifi0=28.3 (1.9 of 2 conns)  mobile0=21.2 (1.9 of 2 conns)",
+    "  solo-after   wifi0      Mbps: wifi0=29.4 (1.9 of 2 conns)",
+    "  solo-after   mobile0    Mbps: mobile0=13.9 (1.9 of 2 conns)",
+    "",
+    "VERDICT: INVALID",
+    "  combined 49.54 Mbps vs best single link wifi0 30.0 Mbps = 1.652x (threshold 1.5x); stacking efficiency 129%",
+    "  wifi0: server IPs ['5.223.7.195'], left from ['192.168.1.36'] (expected 192.168.1.36)",
+    "  mobile0: server IPs ['5.223.7.195'], left from ['10.179.195.159'] (expected 10.179.195.159)",
+    "  public IPs: wifi0=public-ip-C, mobile0=public-ip-D",
+    "    no two links share a public IP or a /24",
+    "  REASON: mobile0: solo speed went from 2.7 to 13.9 Mbps between the before and after measurements (5.10x, limit 1.5x), so the link changed under the test and no ratio computed from it holds.",
+    "  REASON: Combined (49.5 Mbps) exceeds the sum of the solo speeds (38.3 Mbps), stacking efficiency 129%. Links cannot add more together than apart, so conditions changed between phases.",
+    "  REASON: Rerun the throughput job; this run cannot support either verdict.",
+    "  A no-go kills only the real-world sanity check, not the project."
+  ],
+  "redacted": true
+}

@@ -1,0 +1,159 @@
+{
+  "job": "throughput",
+  "started_at": "2026-11-01T22:59:00+05:30",
+  "finished_at": "2026-11-01T22:59:25+05:30",
+  "recorder_git_sha": "058e014d6883",
+  "python": "3.12.4",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "timer": {
+    "timer_period_requested_ms": 1,
+    "timer_resolution_ms": 1.0,
+    "asyncio_sleep_1ms_p50_ms": 1.653
+  },
+  "params": {
+    "url": "https://sgp.proof.ovh.net/files/1Gb.dat",
+    "connections_per_link": 6,
+    "duration_s": 8.0,
+    "warmup_s": 3.0,
+    "budget_mb": null,
+    "go_ratio": 1.5
+  },
+  "results": {
+    "verdict": {
+      "status": "N/A",
+      "go": null,
+      "suspect": false,
+      "reasons": [
+        "Need at least two links to test stacking."
+      ],
+      "notes": []
+    },
+    "phases": [
+      {
+        "phase": "solo-before",
+        "link": "wifi0",
+        "measured_seconds": 4.985,
+        "mbps": {
+          "wifi0": 31.604522366820838
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            32.768,
+            27.918,
+            33.554,
+            30.802
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "combined",
+        "link": "all",
+        "measured_seconds": 5.0,
+        "mbps": {
+          "wifi0": 15.0429376
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            0.766,
+            25.297,
+            27.394,
+            21.758,
+            0.0
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-after",
+        "link": "wifi0",
+        "measured_seconds": 5.0,
+        "mbps": {
+          "wifi0": 0.0
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "budget_stopped": false
+      }
+    ],
+    "links": [
+      {
+        "id": "wifi0",
+        "interface": "Wi-Fi",
+        "local_ip": "192.168.1.36",
+        "mobile": false,
+        "isp": null,
+        "kind": "wifi"
+      }
+    ],
+    "observed": {
+      "wifi0": {
+        "server_ips": [
+          "15.235.182.181"
+        ],
+        "client_ips": [
+          "192.168.1.36"
+        ],
+        "distinct_local_ports": 32,
+        "http_statuses": [
+          200,
+          429
+        ],
+        "final_urls": [
+          "https://sin1-sgp.speedtest.network.ovh.net/files/1Gb.dat"
+        ],
+        "requests": 32,
+        "errors": [
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429"
+        ]
+      }
+    },
+    "public_ips": {
+      "wifi0": "public-ip-B"
+    },
+    "mobile_bytes": 0
+  },
+  "warnings": [],
+  "report": [
+    "Pre-flight checks",
+    "  fMinimizeConnections = 0 (simultaneous connections allowed)",
+    "  wifi0      Wi-Fi                  ip=192.168.1.36    gw=192.168.1.1     kind=wifi",
+    "",
+    "Throughput: 3 phases x 8 s, first 3 s of each discarded, 6 connections per link, https://sgp.proof.ovh.net/files/1Gb.dat",
+    "  solo-before  wifi0      Mbps: wifi0=31.6",
+    "  combined     all        Mbps: wifi0=15.0",
+    "  solo-after   wifi0      Mbps: wifi0=0.0",
+    "",
+    "VERDICT: N/A",
+    "  wifi0: server IPs ['15.235.182.181'], left from ['192.168.1.36'] (expected 192.168.1.36)",
+    "  REASON: Need at least two links to test stacking.",
+    "  A no-go kills only the real-world sanity check, not the project."
+  ],
+  "redacted": true
+}

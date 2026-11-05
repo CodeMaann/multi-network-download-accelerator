@@ -1,0 +1,123 @@
+{
+  "job": "interfaces",
+  "started_at": "2026-11-05T22:42:23+05:30",
+  "finished_at": "2026-11-05T22:42:23+05:30",
+  "recorder_git_sha": "093f460ad45f-dirty",
+  "python": "3.12.4",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "timer": {
+    "timer_period_requested_ms": null,
+    "timer_resolution_ms": 15.625,
+    "asyncio_sleep_1ms_p50_ms": 7.086
+  },
+  "params": {},
+  "results": {
+    "interfaces": [
+      {
+        "name": "Local Area Connection* 1",
+        "ipv4": [
+          "169.254.229.117"
+        ],
+        "is_up": false,
+        "nic_speed_mbps_display_only": 0,
+        "description": null,
+        "kind": "virtual",
+        "gateway": null,
+        "route_metric": null,
+        "interface_metric": 25,
+        "weak_host_send": false
+      },
+      {
+        "name": "Local Area Connection* 11",
+        "ipv4": [
+          "169.254.15.8"
+        ],
+        "is_up": false,
+        "nic_speed_mbps_display_only": 0,
+        "description": null,
+        "kind": "virtual",
+        "gateway": null,
+        "route_metric": null,
+        "interface_metric": 25,
+        "weak_host_send": false
+      },
+      {
+        "name": "Wi-Fi",
+        "ipv4": [
+          "192.168.1.36"
+        ],
+        "is_up": true,
+        "nic_speed_mbps_display_only": 866,
+        "description": "MediaTek Wi-Fi 6 MT7921 Wireless LAN Card",
+        "kind": "wifi",
+        "gateway": "192.168.1.1",
+        "route_metric": 0,
+        "interface_metric": 35,
+        "weak_host_send": false
+      },
+      {
+        "name": "Bluetooth Network Connection",
+        "ipv4": [
+          "169.254.198.164"
+        ],
+        "is_up": false,
+        "nic_speed_mbps_display_only": 3,
+        "description": "Bluetooth Device (Personal Area Network)",
+        "kind": "virtual",
+        "gateway": null,
+        "route_metric": null,
+        "interface_metric": 65,
+        "weak_host_send": false
+      },
+      {
+        "name": "Ethernet",
+        "ipv4": [
+          "169.254.76.49"
+        ],
+        "is_up": false,
+        "nic_speed_mbps_display_only": 0,
+        "description": "Realtek PCIe GbE Family Controller",
+        "kind": "ethernet",
+        "gateway": null,
+        "route_metric": null,
+        "interface_metric": 75,
+        "weak_host_send": false
+      },
+      {
+        "name": "Ethernet 2",
+        "ipv4": [
+          "10.179.195.159"
+        ],
+        "is_up": true,
+        "nic_speed_mbps_display_only": 0,
+        "description": "Remote NDIS based Internet Sharing Device",
+        "kind": "mobile",
+        "gateway": "10.179.195.84",
+        "route_metric": 0,
+        "interface_metric": 75,
+        "weak_host_send": false
+      }
+    ]
+  },
+  "warnings": [],
+  "report": [
+    "Interfaces with an IPv4 address (NIC speed is the negotiated rate: display only)",
+    "  name                         kind      up    ipv4              gateway         weakhostsend",
+    "  Local Area Connection* 1     virtual   False 169.254.229.117   -               False",
+    "  Local Area Connection* 11    virtual   False 169.254.15.8      -               False",
+    "  Wi-Fi                        wifi      True  192.168.1.36      192.168.1.1     False",
+    "  Bluetooth Network Connection virtual   False 169.254.198.164   -               False",
+    "  Ethernet                     ethernet  False 169.254.76.49     -               False",
+    "  Ethernet 2                   mobile    True  10.179.195.159    10.179.195.84   False",
+    "",
+    "Suggested flags (check them; the kind is a guess from the adapter name):",
+    "  --link wifi0=\"Wi-Fi\" --link mobile0=\"Ethernet 2\" --mobile mobile0",
+    "",
+    "Pre-flight checks",
+    "  fMinimizeConnections = 0 (simultaneous connections allowed)",
+    "  wi-fi      Wi-Fi                  ip=192.168.1.36    gw=192.168.1.1     kind=wifi",
+    "  ethernet 2 Ethernet 2             ip=10.179.195.159  gw=10.179.195.84   kind=mobile MOBILE",
+    ""
+  ],
+  "redacted": true
+}

@@ -1,0 +1,297 @@
+{
+  "job": "throughput",
+  "started_at": "2026-11-05T22:52:29+05:30",
+  "finished_at": "2026-11-05T22:53:10+05:30",
+  "recorder_git_sha": "093f460ad45f-dirty",
+  "python": "3.12.4",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "timer": {
+    "timer_period_requested_ms": 1,
+    "timer_resolution_ms": 1.0,
+    "asyncio_sleep_1ms_p50_ms": 2.243
+  },
+  "params": {
+    "url": "https://sgp.proof.ovh.net/files/1Gb.dat",
+    "connections_per_link": 2,
+    "duration_s": 8.0,
+    "warmup_s": 2.0,
+    "budget_mb": 350.0,
+    "go_ratio": 1.5
+  },
+  "results": {
+    "verdict": {
+      "status": "INVALID",
+      "go": null,
+      "suspect": false,
+      "reasons": [
+        "mobile0: solo speed went from 29.0 to 80.1 Mbps between the before and after measurements (2.76x, limit 1.5x), so the link changed under the test and no ratio computed from it holds.",
+        "Combined (94.0 Mbps) exceeds the sum of the solo speeds (84.1 Mbps), stacking efficiency 112%. Links cannot add more together than apart, so conditions changed between phases.",
+        "Rerun the throughput job; this run cannot support either verdict."
+      ],
+      "notes": [],
+      "public_ips": {
+        "wifi0": "public-ip-C",
+        "mobile0": "public-ip-D"
+      },
+      "public_ip_sharing": {
+        "exact": [],
+        "same_24": []
+      },
+      "solo_mbps": {
+        "wifi0": 29.48,
+        "mobile0": 54.58
+      },
+      "dead_links": {},
+      "live_links": [
+        "wifi0",
+        "mobile0"
+      ],
+      "best_link": "mobile0",
+      "best_single_mbps": 54.58,
+      "combined_mbps": 94.0,
+      "gain": 1.722,
+      "stacking_efficiency": 1.118
+    },
+    "phases": [
+      {
+        "phase": "solo-before",
+        "link": "wifi0",
+        "measured_seconds": 5.985,
+        "mbps": {
+          "wifi0": 28.05400701754113
+        },
+        "effective_connections": {
+          "wifi0": 1.69
+        },
+        "rejected_by_server": {
+          "wifi0": 0
+        },
+        "all_connections_refused_s": {
+          "wifi0": 0
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            27.132,
+            34.996,
+            23.593,
+            23.724,
+            33.03
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-before",
+        "link": "mobile0",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "mobile0": 29.032448
+        },
+        "effective_connections": {
+          "mobile0": 1.77
+        },
+        "rejected_by_server": {
+          "mobile0": 0
+        },
+        "all_connections_refused_s": {
+          "mobile0": 0
+        },
+        "series_1s_mbps": {
+          "mobile0": [
+            15.729,
+            15.991,
+            26.739,
+            32.244,
+            39.453,
+            44.04
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "combined",
+        "link": "all",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "wifi0": 30.998528,
+          "mobile0": 63.001941333333335
+        },
+        "effective_connections": {
+          "wifi0": 1.83,
+          "mobile0": 1.77
+        },
+        "rejected_by_server": {
+          "wifi0": 0,
+          "mobile0": 0
+        },
+        "all_connections_refused_s": {
+          "wifi0": 0,
+          "mobile0": 0
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            28.18,
+            35.389,
+            30.147,
+            30.015,
+            31.457,
+            30.802
+          ],
+          "mobile0": [
+            49.676,
+            55.443,
+            63.701,
+            73.269,
+            75.76,
+            60.162
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-after",
+        "link": "wifi0",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "wifi0": 30.911146666666667
+        },
+        "effective_connections": {
+          "wifi0": 1.83
+        },
+        "rejected_by_server": {
+          "wifi0": 0
+        },
+        "all_connections_refused_s": {
+          "wifi0": 0
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            33.423,
+            31.85,
+            31.064,
+            28.18,
+            27.001,
+            33.686
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-after",
+        "link": "mobile0",
+        "measured_seconds": 5.985,
+        "mbps": {
+          "mobile0": 80.13240568086104
+        },
+        "effective_connections": {
+          "mobile0": 1.78
+        },
+        "rejected_by_server": {
+          "mobile0": 0
+        },
+        "all_connections_refused_s": {
+          "mobile0": 0
+        },
+        "series_1s_mbps": {
+          "mobile0": [
+            54.788,
+            78.643,
+            86.376,
+            98.435,
+            68.551
+          ]
+        },
+        "budget_stopped": false
+      }
+    ],
+    "links": [
+      {
+        "id": "wifi0",
+        "interface": "Wi-Fi",
+        "local_ip": "192.168.1.36",
+        "mobile": false,
+        "isp": null,
+        "kind": "wifi"
+      },
+      {
+        "id": "mobile0",
+        "interface": "Ethernet 2",
+        "local_ip": "10.179.195.159",
+        "mobile": true,
+        "isp": null,
+        "kind": "mobile"
+      }
+    ],
+    "observed": {
+      "wifi0": {
+        "server_ips": [
+          "15.235.182.181"
+        ],
+        "client_ips": [
+          "192.168.1.36"
+        ],
+        "distinct_local_ports": 6,
+        "http_statuses": [
+          200
+        ],
+        "final_urls": [
+          "https://sin1-sgp.speedtest.network.ovh.net/files/1Gb.dat"
+        ],
+        "requests": 6,
+        "rejected_by_server": 0,
+        "body_seconds": 42.828,
+        "errors": []
+      },
+      "mobile0": {
+        "server_ips": [
+          "15.235.182.181"
+        ],
+        "client_ips": [
+          "10.179.195.159"
+        ],
+        "distinct_local_ports": 6,
+        "http_statuses": [
+          200
+        ],
+        "final_urls": [
+          "https://sin1-sgp.speedtest.network.ovh.net/files/1Gb.dat"
+        ],
+        "requests": 6,
+        "rejected_by_server": 0,
+        "body_seconds": 42.533,
+        "errors": []
+      }
+    },
+    "public_ips": {
+      "wifi0": "public-ip-C",
+      "mobile0": "public-ip-D"
+    },
+    "mobile_bytes": 141247368
+  },
+  "warnings": [],
+  "report": [
+    "Pre-flight checks",
+    "  fMinimizeConnections = 0 (simultaneous connections allowed)",
+    "  wifi0      Wi-Fi                  ip=192.168.1.36    gw=192.168.1.1     kind=wifi",
+    "  mobile0    Ethernet 2             ip=10.179.195.159  gw=10.179.195.84   kind=mobile MOBILE",
+    "",
+    "Throughput: 5 phases x 8 s, first 2 s of each discarded, 2 connections per link, https://sgp.proof.ovh.net/files/1Gb.dat",
+    "  solo-before  wifi0      Mbps: wifi0=28.1 (1.7 of 2 conns)",
+    "  solo-before  mobile0    Mbps: mobile0=29.0 (1.8 of 2 conns)",
+    "  combined     all        Mbps: wifi0=31.0 (1.8 of 2 conns)  mobile0=63.0 (1.8 of 2 conns)",
+    "  solo-after   wifi0      Mbps: wifi0=30.9 (1.8 of 2 conns)",
+    "  solo-after   mobile0    Mbps: mobile0=80.1 (1.8 of 2 conns)",
+    "",
+    "VERDICT: INVALID",
+    "  combined 94.0 Mbps vs best single link mobile0 54.58 Mbps = 1.722x (threshold 1.5x); stacking efficiency 112%",
+    "  wifi0: server IPs ['15.235.182.181'], left from ['192.168.1.36'] (expected 192.168.1.36)",
+    "  mobile0: server IPs ['15.235.182.181'], left from ['10.179.195.159'] (expected 10.179.195.159)",
+    "  public IPs: wifi0=public-ip-C, mobile0=public-ip-D",
+    "    no two links share a public IP or a /24",
+    "  REASON: mobile0: solo speed went from 29.0 to 80.1 Mbps between the before and after measurements (2.76x, limit 1.5x), so the link changed under the test and no ratio computed from it holds.",
+    "  REASON: Combined (94.0 Mbps) exceeds the sum of the solo speeds (84.1 Mbps), stacking efficiency 112%. Links cannot add more together than apart, so conditions changed between phases.",
+    "  REASON: Rerun the throughput job; this run cannot support either verdict.",
+    "  A no-go kills only the real-world sanity check, not the project."
+  ],
+  "redacted": true
+}

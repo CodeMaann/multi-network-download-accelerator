@@ -1,0 +1,181 @@
+{
+  "job": "trace",
+  "started_at": "2026-11-05T22:57:06+05:30",
+  "finished_at": "2026-11-05T23:17:06+05:30",
+  "recorder_git_sha": "093f460ad45f-dirty",
+  "python": "3.12.4",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "timer": {
+    "timer_period_requested_ms": 1,
+    "timer_resolution_ms": 1.0,
+    "asyncio_sleep_1ms_p50_ms": 2.373
+  },
+  "params": {
+    "url": "http://sin-speed.hetzner.com/1GB.bin",
+    "session": "pm",
+    "mode": "continuous",
+    "minutes": 20.0,
+    "warmup_s": 10.0,
+    "connections_per_link": 2,
+    "budget_mb": 9000.0
+  },
+  "results": {
+    "csv": "mobile-20261105-pm.csv",
+    "meta": "mobile-20261105-pm.meta.json",
+    "truncated": null,
+    "mobile_bytes": 3619046006,
+    "links": [
+      {
+        "id": "wifi0",
+        "interface": "Wi-Fi",
+        "local_ip": "192.168.1.36",
+        "mobile": false,
+        "isp": null,
+        "kind": "wifi"
+      },
+      {
+        "id": "mobile0",
+        "interface": "Ethernet 2",
+        "local_ip": "10.179.195.159",
+        "mobile": true,
+        "isp": null,
+        "kind": "mobile"
+      }
+    ],
+    "public_ips": {
+      "wifi0": "public-ip-C",
+      "mobile0": "public-ip-D"
+    },
+    "warmup_check": {
+      "status": "not_meaningful",
+      "ratio_limit": 0.85,
+      "too_slow_below_mbps": 1.0,
+      "links": {
+        "wifi0": {
+          "status": "inconclusive",
+          "windows": 1,
+          "first_bin_mean_mbps": 20.096,
+          "later_bins_mean_mbps": 26.657,
+          "later_bytes_per_bin": 333217,
+          "first_to_later_ratio": 0.754,
+          "ratio_standard_error": 0.293,
+          "ratio_by_position": [
+            0.754,
+            0.606,
+            0.741,
+            0.645,
+            0.627
+          ]
+        },
+        "mobile0": {
+          "status": "inconclusive",
+          "windows": 1,
+          "first_bin_mean_mbps": 0.776,
+          "later_bins_mean_mbps": 24.325,
+          "later_bytes_per_bin": 304065,
+          "first_to_later_ratio": 0.032,
+          "ratio_standard_error": 1.761,
+          "ratio_by_position": [
+            0.032,
+            0.02,
+            0.012,
+            0.012,
+            0.016
+          ]
+        }
+      }
+    },
+    "connection_reuse": {
+      "wifi0": {
+        "requests": 4,
+        "distinct_local_ports": 2,
+        "rejected_by_server": 0,
+        "effective_connections_mean": 2.0
+      },
+      "mobile0": {
+        "requests": 5,
+        "distinct_local_ports": 3,
+        "rejected_by_server": 0,
+        "effective_connections_mean": 2.0
+      }
+    },
+    "dropouts": {
+      "wifi0": {
+        "saturated_bins": 11900,
+        "unmeasured_bins": 0,
+        "zero_byte_bins": 18,
+        "outages_1s_or_longer": 0,
+        "outage_seconds": 0.0,
+        "longest_zero_run_s": 0.1
+      },
+      "mobile0": {
+        "saturated_bins": 11900,
+        "unmeasured_bins": 0,
+        "zero_byte_bins": 2594,
+        "outages_1s_or_longer": 33,
+        "outage_seconds": 49.5,
+        "longest_zero_run_s": 4.6
+      }
+    }
+  },
+  "warnings": [],
+  "report": [
+    "Pre-flight checks",
+    "  fMinimizeConnections = 0 (simultaneous connections allowed)",
+    "  wifi0      Wi-Fi                  ip=192.168.1.36    gw=192.168.1.1     kind=wifi",
+    "  mobile0    Ethernet 2             ip=10.179.195.159  gw=10.179.195.84   kind=mobile MOBILE",
+    "",
+    "Trace session 'pm': continuous, 20 min: 10 s warm-up (saturated=0), then 1190 s saturated; 2 connections per link; progress every 30 s",
+    "  Projected mobile use: 8187 MB (budget 9000.0 MB)",
+    "  t=   30 s  mobile    2.0 MB  last 30 s Mbps: wifi0=21.4  mobile0=0.5",
+    "  t=   60 s  mobile    3.9 MB  last 30 s Mbps: wifi0=24.6  mobile0=0.5",
+    "  t=   90 s  mobile    7.5 MB  last 30 s Mbps: wifi0=17.8  mobile0=1.0",
+    "  t=  120 s  mobile   11.1 MB  last 30 s Mbps: wifi0=23.7  mobile0=1.0",
+    "  t=  150 s  mobile   13.3 MB  last 30 s Mbps: wifi0=27.9  mobile0=0.6",
+    "  t=  180 s  mobile   16.5 MB  last 30 s Mbps: wifi0=28.1  mobile0=0.9",
+    "  t=  210 s  mobile   18.5 MB  last 30 s Mbps: wifi0=21.0  mobile0=0.5",
+    "  t=  240 s  mobile   23.6 MB  last 30 s Mbps: wifi0=25.9  mobile0=1.4",
+    "  t=  270 s  mobile  298.0 MB  last 30 s Mbps: wifi0=24.6  mobile0=73.2",
+    "  t=  300 s  mobile  499.9 MB  last 30 s Mbps: wifi0=22.5  mobile0=53.9",
+    "  t=  330 s  mobile  672.8 MB  last 30 s Mbps: wifi0=30.1  mobile0=46.1",
+    "  t=  360 s  mobile  808.9 MB  last 30 s Mbps: wifi0=20.5  mobile0=36.3",
+    "  t=  390 s  mobile  913.3 MB  last 30 s Mbps: wifi0=26.9  mobile0=27.8",
+    "  t=  420 s  mobile 1095.4 MB  last 30 s Mbps: wifi0=28.7  mobile0=48.6",
+    "  t=  450 s  mobile 1286.3 MB  last 30 s Mbps: wifi0=24.1  mobile0=50.9",
+    "  t=  480 s  mobile 1431.8 MB  last 30 s Mbps: wifi0=30.3  mobile0=38.8",
+    "  t=  510 s  mobile 1698.8 MB  last 30 s Mbps: wifi0=25.7  mobile0=71.2",
+    "  t=  540 s  mobile 2052.9 MB  last 30 s Mbps: wifi0=25.5  mobile0=94.4",
+    "  t=  570 s  mobile 2573.3 MB  last 30 s Mbps: wifi0=29.6  mobile0=138.8",
+    "  t=  600 s  mobile 2805.9 MB  last 30 s Mbps: wifi0=26.1  mobile0=62.0",
+    "  t=  630 s  mobile 2981.6 MB  last 30 s Mbps: wifi0=27.5  mobile0=46.9",
+    "  t=  660 s  mobile 3121.1 MB  last 30 s Mbps: wifi0=28.8  mobile0=37.2",
+    "  t=  690 s  mobile 3125.6 MB  last 30 s Mbps: wifi0=25.9  mobile0=1.2",
+    "  t=  720 s  mobile 3128.1 MB  last 30 s Mbps: wifi0=29.8  mobile0=0.7",
+    "  t=  750 s  mobile 3286.9 MB  last 30 s Mbps: wifi0=23.3  mobile0=42.3",
+    "  t=  780 s  mobile 3521.3 MB  last 30 s Mbps: wifi0=25.4  mobile0=62.5",
+    "  t=  810 s  mobile 3534.5 MB  last 30 s Mbps: wifi0=30.2  mobile0=3.5",
+    "  t=  840 s  mobile 3543.9 MB  last 30 s Mbps: wifi0=28.8  mobile0=2.5",
+    "  t=  870 s  mobile 3546.5 MB  last 30 s Mbps: wifi0=27.6  mobile0=0.7",
+    "  t=  900 s  mobile 3549.7 MB  last 30 s Mbps: wifi0=27.7  mobile0=0.9",
+    "  t=  930 s  mobile 3552.5 MB  last 30 s Mbps: wifi0=27.5  mobile0=0.7",
+    "  t=  960 s  mobile 3557.2 MB  last 30 s Mbps: wifi0=30.2  mobile0=1.2",
+    "  t=  990 s  mobile 3561.4 MB  last 30 s Mbps: wifi0=26.9  mobile0=1.1",
+    "  t= 1020 s  mobile 3564.9 MB  last 30 s Mbps: wifi0=23.7  mobile0=0.9",
+    "  t= 1050 s  mobile 3567.1 MB  last 30 s Mbps: wifi0=30.0  mobile0=0.6",
+    "  t= 1080 s  mobile 3582.3 MB  last 30 s Mbps: wifi0=25.9  mobile0=4.0",
+    "  t= 1110 s  mobile 3583.2 MB  last 30 s Mbps: wifi0=28.7  mobile0=0.3",
+    "  t= 1140 s  mobile 3585.5 MB  last 30 s Mbps: wifi0=29.6  mobile0=0.6",
+    "  t= 1170 s  mobile 3587.6 MB  last 30 s Mbps: wifi0=26.9  mobile0=0.6",
+    "  t= 1200 s  mobile 3619.0 MB  last 30 s Mbps: wifi0=29.9  mobile0=8.4",
+    "Warm-up check (10 s warm-up; first saturated bin vs the rest of its window, limit 0.85):",
+    "  wifi0: NOT CHECKED, bin-to-bin noise too large over 1 window(s) to resolve a 15% shortfall (standard error 0.29)",
+    "  mobile0: NOT CHECKED, bin-to-bin noise too large over 1 window(s) to resolve a 15% shortfall (standard error 1.76)",
+    "  wifi0: 2.0 of 2 connections downloading on average; 4 requests on 2 local ports; 0 rejected by the server; errors: 0 link (outage), 0 measurement",
+    "  mobile0: 2.0 of 2 connections downloading on average; 5 requests on 3 local ports; 0 rejected by the server; errors: 1 link (outage), 0 measurement",
+    "Dropouts (saturated bins only; empty bytes = unmeasured, never zero):",
+    "  wifi0: 18 zero-byte bins of 11900, 0 outages >= 1 s (0 s total, longest 0.1 s), 0 bins unmeasured",
+    "  mobile0: 2594 zero-byte bins of 11900, 33 outages >= 1 s (49.5 s total, longest 4.6 s), 0 bins unmeasured",
+    "Wrote mobile-20261105-pm.csv and mobile-20261105-pm.meta.json in D:\\Multi-Network Download Accelerator\\feasibility-out\\traces"
+  ],
+  "redacted": true
+}

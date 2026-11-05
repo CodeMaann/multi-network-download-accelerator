@@ -1,0 +1,78 @@
+{
+  "job": "zerofill",
+  "started_at": "2026-11-01T23:06:03+05:30",
+  "finished_at": "2026-11-01T23:06:30+05:30",
+  "recorder_git_sha": "058e014d6883",
+  "python": "3.12.4",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "timer": {
+    "timer_period_requested_ms": null,
+    "timer_resolution_ms": 15.625,
+    "asyncio_sleep_1ms_p50_ms": 16.027
+  },
+  "params": {
+    "dir": "D:\\",
+    "size_gb": 4.0
+  },
+  "results": {
+    "filesystem": "NTFS",
+    "size_bytes": 4294967296,
+    "cases": [
+      {
+        "case": "write-at-offset-0",
+        "what": "baseline: 1 MB at the start of a fresh file",
+        "offset": 0,
+        "prepare_s": 0.0,
+        "write_s": 0.0009,
+        "fsync_s": 0.003,
+        "close_s": 0.0001,
+        "total_s": 0.0039
+      },
+      {
+        "case": "presize-ftruncate-then-write-at-end",
+        "what": "pre-sizing with os.ftruncate first (on Windows the C runtime writes the zeros itself)",
+        "offset": 4293918720,
+        "prepare_s": 4.0192,
+        "write_s": 0.0002,
+        "fsync_s": 0.345,
+        "close_s": 0.0002,
+        "total_s": 4.3646
+      },
+      {
+        "case": "seek-past-end-then-write",
+        "what": "1 MB at the end of a fresh file: NTFS zero-fills the gap",
+        "offset": 4293918720,
+        "prepare_s": 0.0,
+        "write_s": 22.3581,
+        "fsync_s": 0.1307,
+        "close_s": 0.0001,
+        "total_s": 22.4889
+      },
+      {
+        "case": "sparse-then-write-at-end",
+        "what": "the same, after FSCTL_SET_SPARSE (the candidate fix)",
+        "offset": 4293918720,
+        "prepare_s": 0.0001,
+        "write_s": 0.0006,
+        "fsync_s": 0.001,
+        "close_s": 0.0001,
+        "total_s": 0.0018
+      }
+    ],
+    "zero_fill_matters": true,
+    "sparse_fix_s": 0.0018
+  },
+  "warnings": [],
+  "report": [
+    "Zero-fill: 4 GiB files in D:\\ (filesystem NTFS)",
+    "  write-at-offset-0                    prepare 0.000  write 0.001  fsync 0.003  total 0.004 s",
+    "  presize-ftruncate-then-write-at-end  prepare 4.019  write 0.000  fsync 0.345  total 4.365 s",
+    "  seek-past-end-then-write             prepare 0.000  write 22.358  fsync 0.131  total 22.489 s",
+    "  sparse-then-write-at-end             prepare 0.000  write 0.001  fsync 0.001  total 0.002 s",
+    "",
+    "Zero-fill MATTERS here: one 1 MB write at the end of a fresh 4 GiB file stalled for 22.49 s while NTFS filled the gap with zeros.",
+    "  With FSCTL_SET_SPARSE the same write took 0.002 s: the fix works.",
+    "  Pre-sizing with os.ftruncate cost 4.36 s: the writer must not pre-size the output file that way on Windows."
+  ],
+  "redacted": true
+}

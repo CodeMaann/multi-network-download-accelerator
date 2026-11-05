@@ -1,0 +1,311 @@
+{
+  "job": "throughput",
+  "started_at": "2026-11-05T22:48:34+05:30",
+  "finished_at": "2026-11-05T22:49:16+05:30",
+  "recorder_git_sha": "093f460ad45f-dirty",
+  "python": "3.12.4",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "timer": {
+    "timer_period_requested_ms": 1,
+    "timer_resolution_ms": 1.0,
+    "asyncio_sleep_1ms_p50_ms": 2.025
+  },
+  "params": {
+    "url": "http://sin-speed.hetzner.com/1GB.bin",
+    "connections_per_link": 2,
+    "duration_s": 8.0,
+    "warmup_s": 2.0,
+    "budget_mb": 350.0,
+    "go_ratio": 1.5
+  },
+  "results": {
+    "verdict": {
+      "status": "NO-GO (SUSPECT: same server for all links)",
+      "go": false,
+      "suspect": true,
+      "reasons": [
+        "Every link reached the same server IP (5.223.7.195). A limit on that server's side could be capping the combined total, so this no-go is not trustworthy yet: rerun with --url https://sgp.proof.ovh.net/files/1Gb.dat before accepting it."
+      ],
+      "notes": [
+        "mobile0: solo speed drifted from 1.1 to 1.6 Mbps between the before and after measurements, so every ratio here is approximate.",
+        "mobile0: fell to 47% of its solo speed while the other links were active (shared upstream, shared server limit, or a link that degrades under load).",
+        "The links do stack (combined is 98% of the sum of solo speeds). The gain is small because the other links are slow compared with the best one, not because they interfere: reaching 1.5x needs the others to add up to at least 50% of the best link's speed."
+      ],
+      "public_ips": {
+        "wifi0": "public-ip-C",
+        "mobile0": "public-ip-D"
+      },
+      "public_ip_sharing": {
+        "exact": [],
+        "same_24": []
+      },
+      "solo_mbps": {
+        "wifi0": 30.56,
+        "mobile0": 1.31
+      },
+      "dead_links": {},
+      "live_links": [
+        "wifi0",
+        "mobile0"
+      ],
+      "best_link": "wifi0",
+      "best_single_mbps": 30.56,
+      "combined_mbps": 31.11,
+      "gain": 1.018,
+      "stacking_efficiency": 0.976,
+      "same_server_ip": true,
+      "server_ips": {
+        "wifi0": [
+          "5.223.7.195"
+        ],
+        "mobile0": [
+          "5.223.7.195"
+        ]
+      }
+    },
+    "phases": [
+      {
+        "phase": "solo-before",
+        "link": "wifi0",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "wifi0": 30.35648
+        },
+        "effective_connections": {
+          "wifi0": 1.95
+        },
+        "rejected_by_server": {
+          "wifi0": 0
+        },
+        "all_connections_refused_s": {
+          "wifi0": 0
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            30.899,
+            29.9,
+            28.912,
+            31.142,
+            30.562,
+            30.724
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-before",
+        "link": "mobile0",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "mobile0": 1.053632
+        },
+        "effective_connections": {
+          "mobile0": 1.88
+        },
+        "rejected_by_server": {
+          "mobile0": 0
+        },
+        "all_connections_refused_s": {
+          "mobile0": 0
+        },
+        "series_1s_mbps": {
+          "mobile0": [
+            0.417,
+            0.669,
+            1.377,
+            1.29,
+            1.842,
+            0.727
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "combined",
+        "link": "all",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "wifi0": 30.492,
+          "mobile0": 0.613392
+        },
+        "effective_connections": {
+          "wifi0": 1.95,
+          "mobile0": 1.2
+        },
+        "rejected_by_server": {
+          "wifi0": 0,
+          "mobile0": 0
+        },
+        "all_connections_refused_s": {
+          "wifi0": 0,
+          "mobile0": 0
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            30.178,
+            30.724,
+            30.597,
+            30.782,
+            30.817,
+            29.853
+          ],
+          "mobile0": [
+            0.027,
+            0.008,
+            0.068,
+            0.145,
+            1.328,
+            2.085
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-after",
+        "link": "wifi0",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "wifi0": 30.764976
+        },
+        "effective_connections": {
+          "wifi0": 1.95
+        },
+        "rejected_by_server": {
+          "wifi0": 0
+        },
+        "all_connections_refused_s": {
+          "wifi0": 0
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            31.166,
+            30.655,
+            30.62,
+            30.806,
+            30.782,
+            30.411
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-after",
+        "link": "mobile0",
+        "measured_seconds": 6.0,
+        "mbps": {
+          "mobile0": 1.562672
+        },
+        "effective_connections": {
+          "mobile0": 1.86
+        },
+        "rejected_by_server": {
+          "mobile0": 0
+        },
+        "all_connections_refused_s": {
+          "mobile0": 0
+        },
+        "series_1s_mbps": {
+          "mobile0": [
+            1.842,
+            1.648,
+            1.551,
+            1.59,
+            1.745,
+            0.999
+          ]
+        },
+        "budget_stopped": false
+      }
+    ],
+    "links": [
+      {
+        "id": "wifi0",
+        "interface": "Wi-Fi",
+        "local_ip": "192.168.1.36",
+        "mobile": false,
+        "isp": null,
+        "kind": "wifi"
+      },
+      {
+        "id": "mobile0",
+        "interface": "Ethernet 2",
+        "local_ip": "10.179.195.159",
+        "mobile": true,
+        "isp": null,
+        "kind": "mobile"
+      }
+    ],
+    "observed": {
+      "wifi0": {
+        "server_ips": [
+          "5.223.7.195"
+        ],
+        "client_ips": [
+          "192.168.1.36"
+        ],
+        "distinct_local_ports": 6,
+        "http_statuses": [
+          200
+        ],
+        "final_urls": [
+          "http://sin-speed.hetzner.com/1GB.bin"
+        ],
+        "requests": 6,
+        "rejected_by_server": 0,
+        "body_seconds": 46.815,
+        "errors": []
+      },
+      "mobile0": {
+        "server_ips": [
+          "5.223.7.195"
+        ],
+        "client_ips": [
+          "10.179.195.159"
+        ],
+        "distinct_local_ports": 6,
+        "http_statuses": [
+          200
+        ],
+        "final_urls": [
+          "http://sin-speed.hetzner.com/1GB.bin"
+        ],
+        "requests": 6,
+        "rejected_by_server": 0,
+        "body_seconds": 39.485,
+        "errors": []
+      }
+    },
+    "public_ips": {
+      "wifi0": "public-ip-C",
+      "mobile0": "public-ip-D"
+    },
+    "mobile_bytes": 2754540
+  },
+  "warnings": [],
+  "report": [
+    "Pre-flight checks",
+    "  fMinimizeConnections = 0 (simultaneous connections allowed)",
+    "  wifi0      Wi-Fi                  ip=192.168.1.36    gw=192.168.1.1     kind=wifi",
+    "  mobile0    Ethernet 2             ip=10.179.195.159  gw=10.179.195.84   kind=mobile MOBILE",
+    "",
+    "Throughput: 5 phases x 8 s, first 2 s of each discarded, 2 connections per link, http://sin-speed.hetzner.com/1GB.bin",
+    "  solo-before  wifi0      Mbps: wifi0=30.4 (1.9 of 2 conns)",
+    "  solo-before  mobile0    Mbps: mobile0=1.1 (1.9 of 2 conns)",
+    "  combined     all        Mbps: wifi0=30.5 (1.9 of 2 conns)  mobile0=0.6 (1.2 of 2 conns)",
+    "  solo-after   wifi0      Mbps: wifi0=30.8 (1.9 of 2 conns)",
+    "  solo-after   mobile0    Mbps: mobile0=1.6 (1.9 of 2 conns)",
+    "",
+    "VERDICT: NO-GO (SUSPECT: same server for all links)",
+    "  combined 31.11 Mbps vs best single link wifi0 30.56 Mbps = 1.018x (threshold 1.5x); stacking efficiency 98%",
+    "  wifi0: server IPs ['5.223.7.195'], left from ['192.168.1.36'] (expected 192.168.1.36)",
+    "  mobile0: server IPs ['5.223.7.195'], left from ['10.179.195.159'] (expected 10.179.195.159)",
+    "  public IPs: wifi0=public-ip-C, mobile0=public-ip-D",
+    "    no two links share a public IP or a /24",
+    "  REASON: Every link reached the same server IP (5.223.7.195). A limit on that server's side could be capping the combined total, so this no-go is not trustworthy yet: rerun with --url https://sgp.proof.ovh.net/files/1Gb.dat before accepting it.",
+    "  note: mobile0: solo speed drifted from 1.1 to 1.6 Mbps between the before and after measurements, so every ratio here is approximate.",
+    "  note: mobile0: fell to 47% of its solo speed while the other links were active (shared upstream, shared server limit, or a link that degrades under load).",
+    "  note: The links do stack (combined is 98% of the sum of solo speeds). The gain is small because the other links are slow compared with the best one, not because they interfere: reaching 1.5x needs the others to add up to at least 50% of the best link's speed.",
+    "  A no-go kills only the real-world sanity check, not the project."
+  ],
+  "redacted": true
+}

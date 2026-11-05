@@ -1,0 +1,264 @@
+{
+  "job": "throughput",
+  "started_at": "2026-11-01T22:54:52+05:30",
+  "finished_at": "2026-11-01T22:55:13+05:30",
+  "recorder_git_sha": "058e014d6883",
+  "python": "3.12.4",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "timer": {
+    "timer_period_requested_ms": 1,
+    "timer_resolution_ms": 1.0,
+    "asyncio_sleep_1ms_p50_ms": 1.094
+  },
+  "params": {
+    "url": "http://sin-speed.hetzner.com/1GB.bin",
+    "connections_per_link": 6,
+    "duration_s": 4.0,
+    "warmup_s": 2.0,
+    "budget_mb": 80.0,
+    "go_ratio": 1.5
+  },
+  "results": {
+    "verdict": {
+      "status": "GO",
+      "go": true,
+      "suspect": false,
+      "reasons": [],
+      "notes": [
+        "mobile0: solo speed drifted from 0.4 to 0.5 Mbps between the before and after measurements, so every ratio here is approximate.",
+        "wifi0: solo speed drifted from 17.6 to 3.5 Mbps between the before and after measurements, so every ratio here is approximate.",
+        "Every link reached the same server IP and the links still stacked, so a shared server-side limit was not the binding constraint."
+      ],
+      "best_link": "wifi0",
+      "best_single_mbps": 10.58,
+      "combined_mbps": 31.26,
+      "gain": 2.955,
+      "stacking_efficiency": 2.839,
+      "solo_mbps": {
+        "mobile0": 0.43,
+        "wifi0": 10.58
+      },
+      "public_ip_sharing": {
+        "exact": [],
+        "same_24": []
+      },
+      "same_server_ip": true,
+      "server_ips": {
+        "mobile0": [
+          "5.223.7.195"
+        ],
+        "wifi0": [
+          "5.223.7.195"
+        ]
+      }
+    },
+    "phases": [
+      {
+        "phase": "solo-before",
+        "link": "mobile0",
+        "measured_seconds": 2.0,
+        "mbps": {
+          "mobile0": 0.36704
+        },
+        "series_1s_mbps": {
+          "mobile0": [
+            0.347,
+            0.377
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-before",
+        "link": "wifi0",
+        "measured_seconds": 2.0,
+        "mbps": {
+          "wifi0": 17.604048
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            16.739,
+            18.377
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "combined",
+        "link": "all",
+        "measured_seconds": 2.0,
+        "mbps": {
+          "mobile0": 0.496,
+          "wifi0": 30.759168
+        },
+        "series_1s_mbps": {
+          "mobile0": [
+            0.387,
+            0.605
+          ],
+          "wifi0": [
+            30.689,
+            30.748
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-after",
+        "link": "mobile0",
+        "measured_seconds": 2.0,
+        "mbps": {
+          "mobile0": 0.494968
+        },
+        "series_1s_mbps": {
+          "mobile0": [
+            0.633,
+            0.357
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-after",
+        "link": "wifi0",
+        "measured_seconds": 2.0,
+        "mbps": {
+          "wifi0": 3.548688
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            4.704,
+            2.393
+          ]
+        },
+        "budget_stopped": false
+      }
+    ],
+    "links": [
+      {
+        "id": "mobile0",
+        "interface": "Ethernet 3",
+        "local_ip": "172.20.10.14",
+        "mobile": true,
+        "isp": null,
+        "kind": "mobile"
+      },
+      {
+        "id": "wifi0",
+        "interface": "Wi-Fi",
+        "local_ip": "192.168.1.36",
+        "mobile": false,
+        "isp": null,
+        "kind": "wifi"
+      }
+    ],
+    "observed": {
+      "mobile0": {
+        "server_ips": [
+          "5.223.7.195"
+        ],
+        "client_ips": [
+          "172.20.10.14"
+        ],
+        "distinct_local_ports": 25,
+        "http_statuses": [
+          200,
+          429
+        ],
+        "final_urls": [
+          "http://sin-speed.hetzner.com/1GB.bin"
+        ],
+        "requests": 25,
+        "errors": [
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429"
+        ]
+      },
+      "wifi0": {
+        "server_ips": [
+          "5.223.7.195"
+        ],
+        "client_ips": [
+          "192.168.1.36"
+        ],
+        "distinct_local_ports": 57,
+        "http_statuses": [
+          200,
+          429
+        ],
+        "final_urls": [
+          "http://sin-speed.hetzner.com/1GB.bin"
+        ],
+        "requests": 57,
+        "errors": [
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429"
+        ]
+      }
+    },
+    "public_ips": {
+      "mobile0": "public-ip-A",
+      "wifi0": "public-ip-B"
+    },
+    "mobile_bytes": 513052
+  },
+  "warnings": [],
+  "report": [
+    "Pre-flight checks",
+    "  fMinimizeConnections = 0 (simultaneous connections allowed)",
+    "  mobile0    Ethernet 3             ip=172.20.10.14    gw=172.20.10.1     kind=mobile MOBILE",
+    "  wifi0      Wi-Fi                  ip=192.168.1.36    gw=192.168.1.1     kind=wifi",
+    "",
+    "Throughput: 5 phases x 4 s, first 2 s of each discarded, 6 connections per link, http://sin-speed.hetzner.com/1GB.bin",
+    "  solo-before  mobile0    Mbps: mobile0=0.4",
+    "  solo-before  wifi0      Mbps: wifi0=17.6",
+    "  combined     all        Mbps: mobile0=0.5  wifi0=30.8",
+    "  solo-after   mobile0    Mbps: mobile0=0.5",
+    "  solo-after   wifi0      Mbps: wifi0=3.5",
+    "",
+    "VERDICT: GO",
+    "  combined 31.26 Mbps vs best single link wifi0 10.58 Mbps = 2.955x (threshold 1.5x); stacking efficiency 284%",
+    "  mobile0: server IPs ['5.223.7.195'], left from ['172.20.10.14'] (expected 172.20.10.14)",
+    "  wifi0: server IPs ['5.223.7.195'], left from ['192.168.1.36'] (expected 192.168.1.36)",
+    "  note: mobile0: solo speed drifted from 0.4 to 0.5 Mbps between the before and after measurements, so every ratio here is approximate.",
+    "  note: wifi0: solo speed drifted from 17.6 to 3.5 Mbps between the before and after measurements, so every ratio here is approximate.",
+    "  note: Every link reached the same server IP and the links still stacked, so a shared server-side limit was not the binding constraint.",
+    "  A no-go kills only the real-world sanity check, not the project."
+  ],
+  "redacted": true
+}

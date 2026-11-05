@@ -1,0 +1,157 @@
+{
+  "recorded_at": "2026-11-05T22:57:06+05:30",
+  "duration_s": 1200.0,
+  "planned_duration_s": 1200.0,
+  "truncated": null,
+  "sample_ms": 100,
+  "connections_per_link": 2,
+  "mode": "continuous",
+  "warmup_s": 10.0,
+  "saturated_windows_ms": [
+    [
+      10000,
+      1200000
+    ]
+  ],
+  "duty_cycle": null,
+  "semantics": "Goodput, replayed as capacity. bytes = bytes delivered to the application in the 100 ms bin. Continuous recording: the first warmup_s seconds (one cold start: connection setup and slow start) carry bytes with saturated = 0, and every later bin has saturated = 1. A saturated bin with bytes = 0 is a real measured zero: every connection was trying and the link delivered nothing. An EMPTY bytes field means the recorder could not measure that link in that bin (every connection was in a measurement fault such as an HTTP error status or a DNS failure, or the recorder itself stalled): missing data, never zero. Below about 1 Mbps a bin holds only a few packets, so a single zero bin can be packet timing; zero runs of 1 s or more are outages (see dropouts). A single sample of the author's own real conditions.",
+  "unmeasured": {
+    "bins_per_link": {
+      "wifi0": 0,
+      "mobile0": 0
+    },
+    "intervals_s_per_link": {
+      "wifi0": [],
+      "mobile0": []
+    },
+    "recorder_stalls_s": []
+  },
+  "error_counts": {
+    "mobile0": {
+      "link": 1,
+      "measurement": 0
+    }
+  },
+  "dropouts": {
+    "wifi0": {
+      "saturated_bins": 11900,
+      "unmeasured_bins": 0,
+      "zero_byte_bins": 18,
+      "outages_1s_or_longer": 0,
+      "outage_seconds": 0.0,
+      "longest_zero_run_s": 0.1
+    },
+    "mobile0": {
+      "saturated_bins": 11900,
+      "unmeasured_bins": 0,
+      "zero_byte_bins": 2594,
+      "outages_1s_or_longer": 33,
+      "outage_seconds": 49.5,
+      "longest_zero_run_s": 4.6
+    }
+  },
+  "kept_awake": true,
+  "links": [
+    {
+      "id": "wifi0",
+      "interface": "Wi-Fi",
+      "local_ip": "192.168.1.36",
+      "mobile": false,
+      "isp": null,
+      "kind": "wifi",
+      "server_ips": [
+        "5.223.7.195"
+      ],
+      "binding_verified": true
+    },
+    {
+      "id": "mobile0",
+      "interface": "Ethernet 2",
+      "local_ip": "10.179.195.159",
+      "mobile": true,
+      "isp": null,
+      "kind": "mobile",
+      "server_ips": [
+        "5.223.7.195"
+      ],
+      "binding_verified": true
+    }
+  ],
+  "public_ips": {
+    "wifi0": "public-ip-C",
+    "mobile0": "public-ip-D"
+  },
+  "server_url": "http://sin-speed.hetzner.com/1GB.bin",
+  "final_urls": [
+    "http://sin-speed.hetzner.com/1GB.bin"
+  ],
+  "total_bytes_per_link": {
+    "wifi0": 3972817016,
+    "mobile0": 3619046006
+  },
+  "mobile_bytes": 3619046006,
+  "budget_mb": 9000.0,
+  "recorder_git_sha": "093f460ad45f-dirty",
+  "timer_resolution_ms": 1.0,
+  "timer": {
+    "timer_period_requested_ms": 1,
+    "timer_resolution_ms": 1.0,
+    "asyncio_sleep_1ms_p50_ms": 2.373
+  },
+  "connections": "One cold start at t = 0. A connection makes a new request only when its 1 GB body ends or after an error, so connection_reuse (requests vs distinct local ports) counts reconnects; see error_counts for why.",
+  "connection_reuse": {
+    "wifi0": {
+      "requests": 4,
+      "distinct_local_ports": 2,
+      "rejected_by_server": 0,
+      "effective_connections_mean": 2.0
+    },
+    "mobile0": {
+      "requests": 5,
+      "distinct_local_ports": 3,
+      "rejected_by_server": 0,
+      "effective_connections_mean": 2.0
+    }
+  },
+  "warmup_check": {
+    "status": "not_meaningful",
+    "ratio_limit": 0.85,
+    "too_slow_below_mbps": 1.0,
+    "links": {
+      "wifi0": {
+        "status": "inconclusive",
+        "windows": 1,
+        "first_bin_mean_mbps": 20.096,
+        "later_bins_mean_mbps": 26.657,
+        "later_bytes_per_bin": 333217,
+        "first_to_later_ratio": 0.754,
+        "ratio_standard_error": 0.293,
+        "ratio_by_position": [
+          0.754,
+          0.606,
+          0.741,
+          0.645,
+          0.627
+        ]
+      },
+      "mobile0": {
+        "status": "inconclusive",
+        "windows": 1,
+        "first_bin_mean_mbps": 0.776,
+        "later_bins_mean_mbps": 24.325,
+        "later_bytes_per_bin": 304065,
+        "first_to_later_ratio": 0.032,
+        "ratio_standard_error": 1.761,
+        "ratio_by_position": [
+          0.032,
+          0.02,
+          0.012,
+          0.012,
+          0.016
+        ]
+      }
+    }
+  },
+  "conditions": "evening, phone fixed by window, 3 bars",
+  "redacted": true
+}

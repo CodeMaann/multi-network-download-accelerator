@@ -1,0 +1,181 @@
+{
+  "job": "throughput",
+  "started_at": "2026-11-05T22:42:34+05:30",
+  "finished_at": "2026-11-05T22:42:54+05:30",
+  "recorder_git_sha": "093f460ad45f-dirty",
+  "python": "3.12.4",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "timer": {
+    "timer_period_requested_ms": 1,
+    "timer_resolution_ms": 1.0,
+    "asyncio_sleep_1ms_p50_ms": 2.568
+  },
+  "params": {
+    "url": "http://sin-speed.hetzner.com/1GB.bin",
+    "connections_per_link": 2,
+    "duration_s": 12.0,
+    "warmup_s": 3.0,
+    "budget_mb": 50.0,
+    "go_ratio": 1.5
+  },
+  "results": {
+    "verdict": {
+      "status": "N/A",
+      "go": null,
+      "suspect": false,
+      "reasons": [
+        "Need at least two links to test stacking."
+      ],
+      "notes": [],
+      "public_ips": {},
+      "public_ip_sharing": {
+        "exact": [],
+        "same_24": []
+      }
+    },
+    "phases": [
+      {
+        "phase": "solo-before",
+        "link": "wifi0",
+        "measured_seconds": 9.0,
+        "mbps": {
+          "wifi0": 11.421109333333334
+        },
+        "effective_connections": {
+          "wifi0": 1.97
+        },
+        "rejected_by_server": {
+          "wifi0": 0
+        },
+        "all_connections_refused_s": {
+          "wifi0": 0
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            7.794,
+            6.296,
+            7.457,
+            9.06,
+            10.582,
+            11.79,
+            13.358,
+            15.24,
+            21.118
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-before",
+        "link": "mobile0",
+        "measured_seconds": 3.703,
+        "mbps": {
+          "mobile0": 83.57203132608592
+        },
+        "effective_connections": {
+          "mobile0": 1.93
+        },
+        "rejected_by_server": {
+          "mobile0": 0
+        },
+        "all_connections_refused_s": {
+          "mobile0": 0
+        },
+        "series_1s_mbps": {
+          "mobile0": [
+            71.237,
+            77.248,
+            94.303
+          ]
+        },
+        "budget_stopped": true
+      }
+    ],
+    "links": [
+      {
+        "id": "wifi0",
+        "interface": "Wi-Fi",
+        "local_ip": "192.168.1.36",
+        "mobile": false,
+        "isp": "home ISP A",
+        "kind": "wifi"
+      },
+      {
+        "id": "mobile0",
+        "interface": "Ethernet 2",
+        "local_ip": "10.179.195.159",
+        "mobile": true,
+        "isp": "mobile carrier A",
+        "kind": "mobile"
+      }
+    ],
+    "observed": {
+      "wifi0": {
+        "server_ips": [
+          "5.223.7.195"
+        ],
+        "client_ips": [
+          "192.168.1.36"
+        ],
+        "distinct_local_ports": 2,
+        "http_statuses": [
+          200
+        ],
+        "final_urls": [
+          "http://sin-speed.hetzner.com/1GB.bin"
+        ],
+        "requests": 2,
+        "rejected_by_server": 0,
+        "body_seconds": 23.61,
+        "errors": []
+      },
+      "mobile0": {
+        "server_ips": [
+          "5.223.7.195"
+        ],
+        "client_ips": [
+          "10.179.195.159"
+        ],
+        "distinct_local_ports": 2,
+        "http_statuses": [
+          200
+        ],
+        "final_urls": [
+          "http://sin-speed.hetzner.com/1GB.bin"
+        ],
+        "requests": 2,
+        "rejected_by_server": 0,
+        "body_seconds": 12.922,
+        "errors": []
+      }
+    },
+    "public_ips": {
+      "wifi0": "public-ip-C",
+      "mobile0": "public-ip-D"
+    },
+    "mobile_bytes": 50006604
+  },
+  "warnings": [
+    "Mobile budget exhausted; remaining phases skipped."
+  ],
+  "report": [
+    "Pre-flight checks",
+    "  fMinimizeConnections = 0 (simultaneous connections allowed)",
+    "  wifi0      Wi-Fi                  ip=192.168.1.36    gw=192.168.1.1     kind=wifi",
+    "  mobile0    Ethernet 2             ip=10.179.195.159  gw=10.179.195.84   kind=mobile MOBILE",
+    "",
+    "Throughput: 5 phases x 12 s, first 3 s of each discarded, 2 connections per link, http://sin-speed.hetzner.com/1GB.bin",
+    "  solo-before  wifi0      Mbps: wifi0=11.4 (2.0 of 2 conns)",
+    "  solo-before  mobile0    Mbps: mobile0=83.6 (1.9 of 2 conns)",
+    "WARNING: Mobile budget exhausted; remaining phases skipped.",
+    "",
+    "VERDICT: N/A",
+    "  wifi0: server IPs ['5.223.7.195'], left from ['192.168.1.36'] (expected 192.168.1.36)",
+    "  mobile0: server IPs ['5.223.7.195'], left from ['10.179.195.159'] (expected 10.179.195.159)",
+    "  public IPs: ",
+    "    fewer than two public IPs known, so sharing cannot be checked",
+    "  REASON: Need at least two links to test stacking.",
+    "  A no-go kills only the real-world sanity check, not the project."
+  ],
+  "redacted": true
+}

@@ -1,0 +1,160 @@
+{
+  "job": "throughput",
+  "started_at": "2026-11-01T22:57:14+05:30",
+  "finished_at": "2026-11-01T22:57:39+05:30",
+  "recorder_git_sha": "058e014d6883",
+  "python": "3.12.4",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "timer": {
+    "timer_period_requested_ms": 1,
+    "timer_resolution_ms": 1.0,
+    "asyncio_sleep_1ms_p50_ms": 1.037
+  },
+  "params": {
+    "url": "http://sin-speed.hetzner.com/1GB.bin",
+    "connections_per_link": 6,
+    "duration_s": 8.0,
+    "warmup_s": 3.0,
+    "budget_mb": null,
+    "go_ratio": 1.5
+  },
+  "results": {
+    "verdict": {
+      "status": "N/A",
+      "go": null,
+      "suspect": false,
+      "reasons": [
+        "Need at least two links to test stacking."
+      ],
+      "notes": []
+    },
+    "phases": [
+      {
+        "phase": "solo-before",
+        "link": "wifi0",
+        "measured_seconds": 5.0,
+        "mbps": {
+          "wifi0": 20.060832
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            30.794,
+            22.918,
+            14.102,
+            15.624,
+            16.785
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "combined",
+        "link": "all",
+        "measured_seconds": 5.0,
+        "mbps": {
+          "wifi0": 8.918352
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            0.0,
+            0.0,
+            18.688,
+            15.565,
+            10.338
+          ]
+        },
+        "budget_stopped": false
+      },
+      {
+        "phase": "solo-after",
+        "link": "wifi0",
+        "measured_seconds": 5.0,
+        "mbps": {
+          "wifi0": 15.393523199999999
+        },
+        "series_1s_mbps": {
+          "wifi0": [
+            27.855,
+            26.903,
+            10.059,
+            6.935,
+            5.192
+          ]
+        },
+        "budget_stopped": false
+      }
+    ],
+    "links": [
+      {
+        "id": "wifi0",
+        "interface": "Wi-Fi",
+        "local_ip": "192.168.1.36",
+        "mobile": false,
+        "isp": null,
+        "kind": "wifi"
+      }
+    ],
+    "observed": {
+      "wifi0": {
+        "server_ips": [
+          "5.223.7.195"
+        ],
+        "client_ips": [
+          "192.168.1.36"
+        ],
+        "distinct_local_ports": 108,
+        "http_statuses": [
+          200,
+          429
+        ],
+        "final_urls": [
+          "http://sin-speed.hetzner.com/1GB.bin"
+        ],
+        "requests": 108,
+        "errors": [
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429",
+          "HTTP 429"
+        ]
+      }
+    },
+    "public_ips": {
+      "wifi0": "public-ip-B"
+    },
+    "mobile_bytes": 0
+  },
+  "warnings": [],
+  "report": [
+    "Pre-flight checks",
+    "  fMinimizeConnections = 0 (simultaneous connections allowed)",
+    "  wifi0      Wi-Fi                  ip=192.168.1.36    gw=192.168.1.1     kind=wifi",
+    "",
+    "Throughput: 3 phases x 8 s, first 3 s of each discarded, 6 connections per link, http://sin-speed.hetzner.com/1GB.bin",
+    "  solo-before  wifi0      Mbps: wifi0=20.1",
+    "  combined     all        Mbps: wifi0=8.9",
+    "  solo-after   wifi0      Mbps: wifi0=15.4",
+    "",
+    "VERDICT: N/A",
+    "  wifi0: server IPs ['5.223.7.195'], left from ['192.168.1.36'] (expected 192.168.1.36)",
+    "  REASON: Need at least two links to test stacking.",
+    "  A no-go kills only the real-world sanity check, not the project."
+  ],
+  "redacted": true
+}

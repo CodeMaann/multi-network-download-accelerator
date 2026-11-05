@@ -1,0 +1,82 @@
+{
+  "job": "loopback",
+  "started_at": "2026-11-01T22:42:48+05:30",
+  "finished_at": "2026-11-01T22:43:19+05:30",
+  "recorder_git_sha": "058e014d6883",
+  "python": "3.12.4",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "timer": {
+    "timer_period_requested_ms": null,
+    "timer_resolution_ms": 15.625,
+    "asyncio_sleep_1ms_p50_ms": 16.102
+  },
+  "params": {
+    "seconds": 4.0,
+    "warmup": 1.0,
+    "conns_list": [
+      1,
+      3,
+      9
+    ]
+  },
+  "results": {
+    "rows": [
+      {
+        "connections": 1,
+        "mode": "raw",
+        "mbps": 7303.7,
+        "client_cpu_pct": 94.2,
+        "server_cpu_pct": 33.6
+      },
+      {
+        "connections": 1,
+        "mode": "pipeline",
+        "mbps": 3024.6,
+        "client_cpu_pct": 94.6,
+        "server_cpu_pct": 14.5
+      },
+      {
+        "connections": 3,
+        "mode": "raw",
+        "mbps": 7416.9,
+        "client_cpu_pct": 99.9,
+        "server_cpu_pct": 32.8
+      },
+      {
+        "connections": 3,
+        "mode": "pipeline",
+        "mbps": 3139.9,
+        "client_cpu_pct": 99.6,
+        "server_cpu_pct": 21.9
+      },
+      {
+        "connections": 9,
+        "mode": "raw",
+        "mbps": 6765.9,
+        "client_cpu_pct": 99.8,
+        "server_cpu_pct": 27.4
+      },
+      {
+        "connections": 9,
+        "mode": "pipeline",
+        "mbps": 3003.8,
+        "client_cpu_pct": 99.6,
+        "server_cpu_pct": 14.1
+      }
+    ],
+    "pipeline_ceiling_mbps": 3139.9
+  },
+  "warnings": [],
+  "report": [
+    "Loopback ceiling: server in a separate process (pid 31608), 4 s per run after 1 s warm-up, plain HTTP",
+    "  conns=1  raw         7303.7 Mbps   client CPU  94.2%   server CPU  33.6%",
+    "  conns=1  pipeline    3024.6 Mbps   client CPU  94.6%   server CPU  14.5%",
+    "  conns=3  raw         7416.9 Mbps   client CPU  99.9%   server CPU  32.8%",
+    "  conns=3  pipeline    3139.9 Mbps   client CPU  99.6%   server CPU  21.9%",
+    "  conns=9  raw         6765.9 Mbps   client CPU  99.8%   server CPU  27.4%",
+    "  conns=9  pipeline    3003.8 Mbps   client CPU  99.6%   server CPU  14.1%",
+    "",
+    "Ceiling with the event pipeline: 3140 Mbps. Keep the loopback tier's simulated aggregate rates below about 1570 Mbps (half the ceiling) so Python is not the binding constraint."
+  ],
+  "redacted": true
+}
